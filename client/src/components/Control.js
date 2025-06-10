@@ -6,13 +6,15 @@ import {
     List,
     ListItem,
     ListItemText,
-    ListItemSecondaryAction,
+    ListItemAvatar,
+    Avatar,
     IconButton,
     Paper,
     Typography,
 } from '@mui/material';
 import { Add as AddIcon } from '@mui/icons-material';
 import io from 'socket.io-client';
+import { useParams } from 'react-router-dom';
 
 // Create socket instance with explicit configuration
 const socket = io('http://localhost:5000', {
@@ -20,13 +22,19 @@ const socket = io('http://localhost:5000', {
     transports: ['websocket', 'polling']
 });
 
-const Control = ({ roomId }) => {
+const Control = () => {
+    const { roomId } = useParams();
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [username, setUsername] = useState('');
     const [isConnected, setIsConnected] = useState(false);
 
     useEffect(() => {
+        if (!roomId) {
+            console.error('[ERR] No roomId provided');
+            return;
+        }
+
         console.log('[INFO] Control component mounted, roomId:', roomId);
 
         // Socket connection handlers
@@ -78,17 +86,31 @@ const Control = ({ roomId }) => {
 
         console.log('[INFO] Adding video to queue:', video);
         const videoData = {
-            id: video.id.videoId,
+            id: video.id.videoId || video.id.playlistId,
             title: video.snippet.title,
             addedBy: username || 'Anonymous',
+            isPlaylist: video.isPlaylist || false
         };
         console.log('[INFO] Emitting add-to-queue event:', videoData);
         socket.emit('add-to-queue', { roomId, video: videoData });
     };
 
     return (
-        <Box sx={{ p: 2, maxWidth: 600, mx: 'auto' }}>
-            <Paper elevation={3} sx={{ p: 2, mb: 2 }}>
+        <Box sx={{
+            p: 2,
+            maxWidth: 600,
+            mx: 'auto',
+            bgcolor: 'background.default',
+            color: 'text.primary'
+        }}>
+            <Paper
+                elevation={3}
+                sx={{
+                    p: 2,
+                    mb: 2,
+                    bgcolor: 'background.paper'
+                }}
+            >
                 <Typography variant="h6" gutterBottom>
                     Control Panel {!isConnected && '(Disconnected)'}
                 </Typography>
@@ -117,18 +139,22 @@ const Control = ({ roomId }) => {
                 </Box>
             </Paper>
 
-            <Paper elevation={3} sx={{ p: 2 }}>
+            <Paper
+                elevation={3}
+                sx={{
+                    p: 2,
+                    bgcolor: 'background.paper'
+                }}
+            >
                 <Typography variant="h6" gutterBottom>
                     Search Results
                 </Typography>
                 <List>
                     {searchResults.map((video) => (
-                        <ListItem key={video.id.videoId}>
-                            <ListItemText
-                                primary={video.snippet.title}
-                                secondary={video.snippet.channelTitle}
-                            />
-                            <ListItemSecondaryAction>
+                        <ListItem
+                            key={video.id.videoId || video.id.playlistId}
+                            divider
+                            secondaryAction={
                                 <IconButton
                                     edge="end"
                                     aria-label="add"
@@ -137,7 +163,37 @@ const Control = ({ roomId }) => {
                                 >
                                     <AddIcon />
                                 </IconButton>
-                            </ListItemSecondaryAction>
+                            }
+                        >
+                            <ListItemAvatar>
+                                <Avatar
+                                    variant="rounded"
+                                    src={video.snippet.thumbnails.medium.url}
+                                    alt={video.snippet.title}
+                                />
+                            </ListItemAvatar>
+                            <ListItemText
+                                primary={
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        {video.snippet.title}
+                                        {video.isPlaylist && (
+                                            <Typography
+                                                variant="caption"
+                                                sx={{
+                                                    bgcolor: 'primary.main',
+                                                    color: 'primary.contrastText',
+                                                    px: 1,
+                                                    py: 0.5,
+                                                    borderRadius: 1
+                                                }}
+                                            >
+                                                Playlist
+                                            </Typography>
+                                        )}
+                                    </Box>
+                                }
+                                secondary={video.snippet.channelTitle}
+                            />
                         </ListItem>
                     ))}
                 </List>

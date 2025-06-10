@@ -65,14 +65,37 @@ app.post('/api/rooms', async (req, res) => {
     }
 });
 
+// Get room QR code
+app.get('/api/rooms/:roomId/qr', async (req, res) => {
+    try {
+        const { roomId } = req.params;
+        // Ensure room exists
+        if (!rooms.has(roomId)) {
+            rooms.set(roomId, {
+                queue: [],
+                currentVideo: null
+            });
+        }
+        const qrCode = await generateRoomQR(roomId);
+        res.json({ qrCode });
+    } catch (error) {
+        console.error(`[ERR] Failed to generate QR code: ${error.message}`);
+        res.status(500).json({ error: 'Failed to generate QR code' });
+    }
+});
+
 // Get room status
 app.get('/api/rooms/:roomId', (req, res) => {
-    const room = rooms.get(req.params.roomId);
-    if (!room) {
-        console.log(`[ERR] Room not found: ${req.params.roomId}`);
-        return res.status(404).json({ error: 'Room not found' });
+    const { roomId } = req.params;
+    // Ensure room exists
+    if (!rooms.has(roomId)) {
+        rooms.set(roomId, {
+            queue: [],
+            currentVideo: null
+        });
     }
-    console.log(`[INFO] Retrieved room status: ${req.params.roomId}`);
+    const room = rooms.get(roomId);
+    console.log(`[INFO] Retrieved room status: ${roomId}`);
     res.json(room);
 });
 
@@ -94,14 +117,24 @@ app.get('/api/search', async (req, res) => {
                 params: {
                     part: 'snippet',
                     q: query,
-                    type: 'video',
+                    type: 'video,playlist',
                     key: apiKey,
-                    maxResults: 10
+                    maxResults: 10,
+                    safeSearch: 'none'
                 }
             }
         );
-        console.log(`[INFO] Found ${response.data.items.length} results for: "${query}"`);
-        res.json(response.data);
+
+        // Filter and process the results
+        const processedItems = response.data.items
+            .filter(item => item.id.kind === 'youtube#video' || item.id.kind === 'youtube#playlist')
+            .map(item => ({
+                ...item,
+                isPlaylist: item.id.kind === 'youtube#playlist'
+            }));
+
+        console.log(`[INFO] Found ${processedItems.length} results for: "${query}"`);
+        res.json({ ...response.data, items: processedItems });
     } catch (error) {
         console.error(`[ERR] YouTube search failed: ${error.message}`);
         res.status(500).json({ error: 'Error searching YouTube videos' });
@@ -158,6 +191,9 @@ io.on('connection', (socket) => {
             io.to(roomId).emit('queue-updated', room.queue);
         } else {
             console.log(`[INFO] No videos in queue for room ${roomId}`);
+            room.currentVideo = null;
+            io.to(roomId).emit('video-changed', null);
+            io.to(roomId).emit('queue-updated', []);
         }
     });
 
