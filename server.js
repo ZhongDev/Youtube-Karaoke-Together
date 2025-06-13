@@ -41,6 +41,19 @@ app.use(express.json());
 // Store active rooms and their queues
 const rooms = new Map();
 
+// Cleanup old rooms every hour
+setInterval(() => {
+    const now = Date.now();
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+    for (const [roomId, room] of rooms.entries()) {
+        if (now - room.createdAt > ONE_DAY_MS) {
+            console.log(`[INFO] Cleaning up old room: ${roomId}`);
+            rooms.delete(roomId);
+        }
+    }
+}, 60 * 60 * 1000); // Run every hour
+
 // Generate QR code for a room
 async function generateRoomQR(roomId, origin) {
     const backendUrl = origin ? origin : 'http://localhost:443';
@@ -54,7 +67,8 @@ app.post('/api/rooms', async (req, res) => {
         const roomId = uuidv4();
         rooms.set(roomId, {
             queue: [],
-            currentVideo: null
+            currentVideo: null,
+            createdAt: Date.now()
         });
 
         const qrCode = await generateRoomQR(roomId, req.headers.hostname);
@@ -76,7 +90,8 @@ app.get('/api/rooms/:roomId/qr', async (req, res) => {
         if (!rooms.has(roomId)) {
             rooms.set(roomId, {
                 queue: [],
-                currentVideo: null
+                currentVideo: null,
+                createdAt: Date.now()
             });
         }
         console.log(`[INFO] Generating QR code for room ${roomId}`);
@@ -95,7 +110,8 @@ app.get('/api/rooms/:roomId', (req, res) => {
     if (!rooms.has(roomId)) {
         rooms.set(roomId, {
             queue: [],
-            currentVideo: null
+            currentVideo: null,
+            createdAt: Date.now()
         });
     }
     const room = rooms.get(roomId);
