@@ -42,8 +42,9 @@ app.use(express.json());
 const rooms = new Map();
 
 // Generate QR code for a room
-async function generateRoomQR(roomId) {
-    const url = `http://localhost:3000/control/${roomId}`;
+async function generateRoomQR(roomId, origin) {
+    const backendUrl = origin ? origin : 'http://localhost:3000';
+    const url = `${backendUrl}/control/${roomId}`;
     return await QRCode.toDataURL(url);
 }
 
@@ -56,7 +57,7 @@ app.post('/api/rooms', async (req, res) => {
             currentVideo: null
         });
 
-        const qrCode = await generateRoomQR(roomId);
+        const qrCode = await generateRoomQR(roomId, req.headers.hostname);
         console.log(`[INFO] Created new room: ${roomId}`);
         res.json({ roomId, qrCode });
     } catch (error) {
@@ -65,8 +66,10 @@ app.post('/api/rooms', async (req, res) => {
     }
 });
 
-// Get room QR code
+// Get QR code for a room
 app.get('/api/rooms/:roomId/qr', async (req, res) => {
+    const origin = req.headers.hostname;
+    console.log('[INFO] QR Origin:', origin);
     try {
         const { roomId } = req.params;
         // Ensure room exists
@@ -76,7 +79,8 @@ app.get('/api/rooms/:roomId/qr', async (req, res) => {
                 currentVideo: null
             });
         }
-        const qrCode = await generateRoomQR(roomId);
+        console.log(`[INFO] Generating QR code for room ${roomId}`);
+        const qrCode = await generateRoomQR(roomId, origin);
         res.json({ qrCode });
     } catch (error) {
         console.error(`[ERR] Failed to generate QR code: ${error.message}`);
@@ -101,7 +105,7 @@ app.get('/api/rooms/:roomId', (req, res) => {
 
 // Search YouTube videos
 app.get('/api/search', async (req, res) => {
-    const { query } = req.query;
+    const { query, pageToken } = req.query;
     const apiKey = process.env.YOUTUBE_API_KEY;
 
     if (!apiKey) {
@@ -110,7 +114,7 @@ app.get('/api/search', async (req, res) => {
     }
 
     try {
-        console.log(`[INFO] Searching YouTube for: "${query}"`);
+        console.log(`[INFO] Searching YouTube for: "${query}"${pageToken ? ` with pageToken: ${pageToken}` : ''}`);
         const response = await axios.get(
             `https://www.googleapis.com/youtube/v3/search`,
             {
@@ -120,7 +124,8 @@ app.get('/api/search', async (req, res) => {
                     type: 'video,playlist',
                     key: apiKey,
                     maxResults: 10,
-                    safeSearch: 'none'
+                    safeSearch: 'none',
+                    pageToken: pageToken || undefined
                 }
             }
         );
@@ -134,7 +139,12 @@ app.get('/api/search', async (req, res) => {
             }));
 
         console.log(`[INFO] Found ${processedItems.length} results for: "${query}"`);
-        res.json({ ...response.data, items: processedItems });
+        res.json({
+            ...response.data,
+            items: processedItems,
+            nextPageToken: response.data.nextPageToken,
+            prevPageToken: response.data.prevPageToken
+        });
     } catch (error) {
         console.error(`[ERR] YouTube search failed: ${error.message}`);
         res.status(500).json({ error: 'Error searching YouTube videos' });
@@ -194,6 +204,18 @@ io.on('connection', (socket) => {
             room.currentVideo = null;
             io.to(roomId).emit('video-changed', null);
             io.to(roomId).emit('queue-updated', []);
+        }
+    });
+
+    socket.on('remove-from-queue', ({ roomId, index }) => {
+        console.log(`[INFO] Received remove-from-queue event from socket ${socket.id} for room ${roomId}, index: ${index}`);
+        const room = rooms.get(roomId);
+        if (room && room.queue.length > index) {
+            const removedVideo = room.queue.splice(index, 1)[0];
+            console.log(`[INFO] Removed video "${removedVideo.title}" from queue`);
+            io.to(roomId).emit('queue-updated', room.queue);
+        } else {
+            console.log(`[ERR] Invalid queue index ${index} for room ${roomId}`);
         }
     });
 

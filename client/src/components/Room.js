@@ -1,21 +1,85 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Box, Paper, Typography, List, ListItem, ListItemText, ListItemAvatar, Avatar } from '@mui/material';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { Box, Divider, Paper, Typography, List, ListItem, ListItemText, ListItemAvatar, Avatar, IconButton, Modal, TextField, Button } from '@mui/material';
 import YouTube from 'react-youtube';
 import io from 'socket.io-client';
 import { useParams } from 'react-router-dom';
+import SettingsIcon from '@mui/icons-material/Settings';
 
-const socket = io('http://localhost:5000', {
-    withCredentials: true,
-    transports: ['websocket', 'polling']
-});
+// Get the initial backend URL from localStorage or use default
+const getInitialBackendUrl = () => {
+    return localStorage.getItem('backendUrl') || 'http://localhost:5000';
+};
 
 const Room = () => {
     const { roomId } = useParams();
     const playerRef = useRef(null);
     const queueRef = useRef([]);
     const isConnectedRef = useRef(false);
-    const qrCodeRef = useRef(null);
+    const [qrCode, setQrCode] = useState(null);
     const [, forceUpdate] = useState({});
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [backendUrl, setBackendUrl] = useState(getInitialBackendUrl());
+    const [socket, setSocket] = useState(null);
+
+    // Initialize socket connection
+    useEffect(() => {
+        const newSocket = io(backendUrl, {
+            withCredentials: true,
+            transports: ['websocket', 'polling']
+        });
+        setSocket(newSocket);
+
+        return () => {
+            if (newSocket) {
+                newSocket.disconnect();
+            }
+        };
+    }, [backendUrl]);
+
+    // Save backend URL to localStorage when it changes
+    useEffect(() => {
+        localStorage.setItem('backendUrl', backendUrl);
+    }, [backendUrl]);
+
+    const handleSettingsOpen = () => setSettingsOpen(true);
+    const handleSettingsClose = () => setSettingsOpen(false);
+
+    const handleBackendUrlChange = (event) => {
+        setBackendUrl(event.target.value);
+    };
+
+    const handleSaveSettings = () => {
+        handleSettingsClose();
+        // Socket will be recreated due to the useEffect dependency on backendUrl
+        // Explicitly fetch new QR code after URL change
+        fetchQRCode();
+    };
+
+    // Add effect to refetch QR code when backend URL changes
+    useEffect(() => {
+        if (roomId) {
+            fetchQRCode();
+        }
+    }, [backendUrl, roomId]);
+
+    // Update the fetchQRCode function to include roomId in its dependencies
+    const fetchQRCode = useCallback(async () => {
+        try {
+            const API_URL = backendUrl;
+            const response = await fetch(`${API_URL}/api/rooms/${roomId}/qr`, {
+                method: 'GET',
+                headers: {
+                    'hostname': API_URL
+                }
+            });
+            const data = await response.json();
+            setQrCode(data.qrCode);
+            console.log('[INFO] QR code fetched:', data.qrCode);
+            console.log('[INFO] API_URL:', API_URL);
+        } catch (error) {
+            console.error('[ERR] Failed to fetch QR code:', error);
+        }
+    }, [backendUrl, roomId]);
 
     useEffect(() => {
         if (!roomId) {
@@ -23,21 +87,9 @@ const Room = () => {
             return;
         }
 
-        // Fetch QR code
-        const fetchQRCode = async () => {
-            try {
-                const response = await fetch(`http://localhost:5000/api/rooms/${roomId}/qr`);
-                const data = await response.json();
-                qrCodeRef.current = data.qrCode;
-                forceUpdate({});
-            } catch (error) {
-                console.error('[ERR] Failed to fetch QR code:', error);
-            }
-        };
-
-        fetchQRCode();
-
         console.log('[INFO] Room component mounted, roomId:', roomId);
+
+        if (!socket) return;
 
         socket.on('connect', () => {
             console.log('[INFO] Socket connected');
@@ -103,7 +155,7 @@ const Room = () => {
             socket.off('video-changed');
             socket.off('queue-updated');
         };
-    }, [roomId]);
+    }, [roomId, socket, backendUrl]);
 
     const onPlayerReady = (event) => {
         console.log('[INFO] Player ready');
@@ -112,7 +164,9 @@ const Room = () => {
 
     const onVideoEnd = () => {
         console.log('[INFO] Video ended, requesting next video');
-        socket.emit('play-next', roomId);
+        if (socket) {
+            socket.emit('play-next', roomId);
+        }
     };
 
     const opts = {
@@ -191,6 +245,7 @@ const Room = () => {
                                         height: '100%'
                                     }}
                                     iframeClassName="youtube-player"
+                                    allow="autoplay"
                                 />
                             </Box>
                         </Box>
@@ -235,36 +290,72 @@ const Room = () => {
                         p: 2,
                         display: 'flex',
                         justifyContent: 'center',
+                        alignItems: 'center',
                         bgcolor: 'background.paper'
                     }}
                 >
                     <Box
                         component="a"
-                        href={`/control/${roomId}`}
+                        href={`${backendUrl}/control/${roomId}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         sx={{
+                            flex: 3,
                             display: 'flex',
                             justifyContent: 'center',
-                            alignItems: 'center',
-                            cursor: 'pointer',
-                            '&:hover': {
-                                opacity: 0.8
-                            }
+                            alignItems: 'center'
                         }}
                     >
-                        <img
-                            src={qrCodeRef.current}
-                            alt="Room QR Code"
-                            style={{
-                                width: '200px',
-                                height: '200px',
-                                objectFit: 'contain'
-                            }}
-                        />
+                        {qrCode && (
+                            <img
+                                src={qrCode}
+                                alt="Room QR Code"
+                                style={{ maxWidth: '100%', justifyContent: 'center', alignItems: 'center' }}
+                            />
+                        )}
+                    </Box>
+                    <Divider orientation="vertical" flexItem sx={{ mx: 2 }} />
+                    <Box sx={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
+                        <IconButton onClick={handleSettingsOpen} color="primary">
+                            <SettingsIcon />
+                        </IconButton>
                     </Box>
                 </Paper>
             </Box>
+
+            <Modal
+                open={settingsOpen}
+                onClose={handleSettingsClose}
+                aria-labelledby="settings-modal-title"
+            >
+                <Box sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    width: 400,
+                    bgcolor: 'background.paper',
+                    boxShadow: 24,
+                    p: 4,
+                    borderRadius: 1,
+                }}>
+                    <Typography id="settings-modal-title" variant="h6" component="h2" gutterBottom>
+                        Backend Settings
+                    </Typography>
+                    <TextField
+                        fullWidth
+                        label="Backend URL"
+                        value={backendUrl}
+                        onChange={handleBackendUrlChange}
+                        margin="normal"
+                        helperText="Enter the backend URL (e.g., http://localhost:5000)"
+                    />
+                    <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+                        <Button onClick={handleSettingsClose}>Cancel</Button>
+                        <Button onClick={handleSaveSettings} variant="contained">Save</Button>
+                    </Box>
+                </Box>
+            </Modal>
         </Box>
     );
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Box,
     TextField,
@@ -11,23 +11,71 @@ import {
     IconButton,
     Paper,
     Typography,
+    Badge,
+    Chip,
+    BottomNavigation,
+    BottomNavigationAction,
+    CircularProgress,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    FormControlLabel,
+    Checkbox
 } from '@mui/material';
-import { Add as AddIcon } from '@mui/icons-material';
-import io from 'socket.io-client';
+import {
+    Search as SearchIcon,
+    QueueMusic as QueueIcon,
+    Settings as SettingsIcon,
+    SkipNext as SkipIcon
+} from '@mui/icons-material';
+import { Add as AddIcon, PlaylistAdd as PlaylistIcon } from '@mui/icons-material';
+import socket from '../socket';
 import { useParams } from 'react-router-dom';
-
-// Create socket instance with explicit configuration
-const socket = io('http://localhost:5000', {
-    withCredentials: true,
-    transports: ['websocket', 'polling']
-});
+import Queue from './Queue';
+import Settings from './Settings';
 
 const Control = () => {
     const { roomId } = useParams();
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
-    const [username, setUsername] = useState('');
     const [isConnected, setIsConnected] = useState(false);
+    const [isSearching, setIsSearching] = useState(false);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [nextPageToken, setNextPageToken] = useState(null);
+    const [username, setUsername] = useState(() => {
+        const savedUsername = localStorage.getItem('karaokeUsername');
+        return savedUsername || '';
+    });
+    const [rememberMe, setRememberMe] = useState(() => {
+        return localStorage.getItem('karaokeRememberMe') === 'true';
+    });
+    const [showNameModal, setShowNameModal] = useState(() => {
+        return !localStorage.getItem('karaokeRememberMe');
+    });
+    const [currentTab, setCurrentTab] = useState(0);
+    const loadingRef = useRef(false);
+    const observer = useRef();
+
+    const lastResultRef = useCallback(node => {
+        if (loadingRef.current || !nextPageToken) return;
+
+        if (observer.current) {
+            observer.current.disconnect();
+        }
+
+        observer.current = new IntersectionObserver(entries => {
+            if (entries[0].isIntersecting && !loadingRef.current && nextPageToken) {
+                loadMoreResults();
+            }
+        }, {
+            threshold: 0.5
+        });
+
+        if (node) {
+            observer.current.observe(node);
+        }
+    }, [nextPageToken]);
 
     useEffect(() => {
         if (!roomId) {
@@ -37,7 +85,6 @@ const Control = () => {
 
         console.log('[INFO] Control component mounted, roomId:', roomId);
 
-        // Socket connection handlers
         socket.on('connect', () => {
             console.log('[INFO] Socket connected');
             setIsConnected(true);
@@ -54,7 +101,6 @@ const Control = () => {
             setIsConnected(false);
         });
 
-        // Cleanup on unmount
         return () => {
             socket.off('connect');
             socket.off('connect_error');
@@ -62,103 +108,164 @@ const Control = () => {
         };
     }, [roomId]);
 
-    const searchVideos = async () => {
+    const handleSearch = async () => {
+        const query = searchQuery.trim();
+        if (!query) return;
+
+        setIsSearching(true);
+        setNextPageToken(null);
         try {
-            console.log('[INFO] Searching for:', searchQuery);
-            const response = await fetch(`http://localhost:5000/api/search?query=${encodeURIComponent(searchQuery)}`);
-            const data = await response.json();
-            if (data.error) {
-                console.error('[ERR] Search error:', data.error);
-                return;
+            console.log('[INFO] Searching for:', query);
+            const API_URL = window.location.protocol + '//' + window.location.hostname + ':5000';
+            const response = await fetch(`${API_URL}/api/search?query=${encodeURIComponent(query)}`);
+            if (!response.ok) {
+                throw new Error(`Search failed with status: ${response.status}`);
             }
-            console.log('[INFO] Search results:', data.items.length, 'videos found');
-            setSearchResults(data.items);
+            const data = await response.json();
+            console.log('[INFO] Search results:', data);
+
+            const transformedResults = data.items.map(item => ({
+                id: item.id.videoId || item.id.playlistId,
+                title: item.snippet.title,
+                channelTitle: item.snippet.channelTitle,
+                isPlaylist: !!item.id.playlistId
+            }));
+
+            console.log('[INFO] Transformed results:', transformedResults);
+            setSearchResults(transformedResults);
+            setNextPageToken(data.nextPageToken);
         } catch (error) {
-            console.error('[ERR] Error searching videos:', error);
+            console.error('[ERR] Search failed:', error);
+            setSearchResults([]);
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
+    const loadMoreResults = async () => {
+        if (!nextPageToken || loadingRef.current) return;
+
+        loadingRef.current = true;
+        setIsLoadingMore(true);
+
+        try {
+            const query = searchQuery.trim();
+            console.log('[INFO] Loading more results for:', query, 'with token:', nextPageToken);
+            const API_URL = window.location.protocol + '//' + window.location.hostname + ':5000';
+            const response = await fetch(
+                `${API_URL}/api/search?query=${encodeURIComponent(query)}&pageToken=${encodeURIComponent(nextPageToken)}`
+            );
+            if (!response.ok) {
+                throw new Error(`Load more failed with status: ${response.status}`);
+            }
+            const data = await response.json();
+            console.log('[INFO] Load more results:', data);
+
+            const transformedResults = data.items.map(item => ({
+                id: item.id.videoId || item.id.playlistId,
+                title: item.snippet.title,
+                channelTitle: item.snippet.channelTitle,
+                isPlaylist: !!item.id.playlistId
+            }));
+
+            setSearchResults(prevResults => {
+                const existingIds = new Set(prevResults.map(r => r.id));
+                const newResults = transformedResults.filter(r => !existingIds.has(r.id));
+                return [...prevResults, ...newResults];
+            });
+
+            setNextPageToken(data.nextPageToken);
+        } catch (error) {
+            console.error('[ERR] Load more failed:', error);
+        } finally {
+            setIsLoadingMore(false);
+            loadingRef.current = false;
+        }
+    };
+
+    const handleKeyPress = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleSearch();
         }
     };
 
     const addToQueue = (video) => {
-        if (!isConnected) {
-            console.error('[ERR] Cannot add to queue: Socket not connected');
+        if (!username.trim()) {
+            setCurrentTab(2); // Switch to settings tab
             return;
         }
 
-        console.log('[INFO] Adding video to queue:', video);
+        console.log('[INFO] Adding to queue:', video);
         const videoData = {
-            id: video.id.videoId || video.id.playlistId,
-            title: video.snippet.title,
-            addedBy: username || 'Anonymous',
-            isPlaylist: video.isPlaylist || false
+            ...video,
+            addedBy: username
         };
-        console.log('[INFO] Emitting add-to-queue event:', videoData);
         socket.emit('add-to-queue', { roomId, video: videoData });
     };
 
-    return (
-        <Box sx={{
-            p: 2,
-            maxWidth: 600,
-            mx: 'auto',
-            bgcolor: 'background.default',
-            color: 'text.primary'
-        }}>
-            <Paper
-                elevation={3}
-                sx={{
-                    p: 2,
-                    mb: 2,
-                    bgcolor: 'background.paper'
-                }}
-            >
-                <Typography variant="h6" gutterBottom>
-                    Control Panel {!isConnected && '(Disconnected)'}
+    const handleNameSubmit = () => {
+        if (username.trim()) {
+            // Always save the username to localStorage
+            localStorage.setItem('karaokeUsername', username);
+
+            if (rememberMe) {
+                localStorage.setItem('karaokeRememberMe', 'true');
+            } else {
+                localStorage.removeItem('karaokeRememberMe');
+            }
+            setShowNameModal(false);
+        }
+    };
+
+    const handleSkip = () => {
+        if (!username.trim()) {
+            setShowNameModal(true);
+            return;
+        }
+        socket.emit('play-next', roomId);
+    };
+
+    const renderSearchTab = () => (
+        <Box sx={{ maxWidth: 600, mx: 'auto', width: '100%', p: 2 }}>
+            <Paper elevation={3} sx={{ p: 2, mb: 2 }}>
+                <Typography variant="h5" gutterBottom>
+                    Search
                 </Typography>
-                <TextField
-                    fullWidth
-                    label="Your Name"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    margin="normal"
-                />
-                <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
+                <Box sx={{ display: 'flex', gap: 1 }}>
                     <TextField
                         fullWidth
-                        label="Search YouTube"
+                        variant="outlined"
+                        placeholder="Search for a video..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        onKeyPress={(e) => {
-                            if (e.key === 'Enter') {
-                                searchVideos();
-                            }
-                        }}
+                        onKeyPress={handleKeyPress}
+                        disabled={!isConnected || isSearching}
                     />
-                    <Button variant="contained" onClick={searchVideos}>
-                        Search
+                    <Button
+                        variant="contained"
+                        onClick={handleSearch}
+                        disabled={!isConnected || isSearching || !searchQuery.trim()}
+                    >
+                        {isSearching ? 'Searching...' : 'Search'}
                     </Button>
                 </Box>
             </Paper>
 
-            <Paper
-                elevation={3}
-                sx={{
-                    p: 2,
-                    bgcolor: 'background.paper'
-                }}
-            >
+            <Paper elevation={3} sx={{ p: 2 }}>
                 <Typography variant="h6" gutterBottom>
-                    Search Results
+                    Search Results {searchResults.length > 0 && `(${searchResults.length})`}
                 </Typography>
                 <List>
-                    {searchResults.map((video) => (
+                    {searchResults.map((result, index) => (
                         <ListItem
-                            key={video.id.videoId || video.id.playlistId}
+                            key={result.id}
                             divider
+                            ref={index === searchResults.length - 1 ? lastResultRef : null}
                             secondaryAction={
                                 <IconButton
                                     edge="end"
-                                    aria-label="add"
-                                    onClick={() => addToQueue(video)}
+                                    onClick={() => addToQueue(result)}
                                     disabled={!isConnected}
                                 >
                                     <AddIcon />
@@ -168,36 +275,135 @@ const Control = () => {
                             <ListItemAvatar>
                                 <Avatar
                                     variant="rounded"
-                                    src={video.snippet.thumbnails.medium.url}
-                                    alt={video.snippet.title}
+                                    src={`https://img.youtube.com/vi/${result.id}/mqdefault.jpg`}
+                                    alt={result.title}
                                 />
                             </ListItemAvatar>
                             <ListItemText
-                                primary={
+                                primary={result.title}
+                                secondary={
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                        {video.snippet.title}
-                                        {video.isPlaylist && (
-                                            <Typography
-                                                variant="caption"
-                                                sx={{
-                                                    bgcolor: 'primary.main',
-                                                    color: 'primary.contrastText',
-                                                    px: 1,
-                                                    py: 0.5,
-                                                    borderRadius: 1
-                                                }}
-                                            >
-                                                Playlist
-                                            </Typography>
+                                        <Typography variant="body2" color="text.secondary">
+                                            {result.channelTitle}
+                                        </Typography>
+                                        {result.isPlaylist && (
+                                            <Chip
+                                                size="small"
+                                                icon={<PlaylistIcon />}
+                                                label="Playlist"
+                                                color="primary"
+                                                variant="outlined"
+                                            />
                                         )}
                                     </Box>
                                 }
-                                secondary={video.snippet.channelTitle}
                             />
                         </ListItem>
                     ))}
+                    {isLoadingMore && (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                            <CircularProgress size={24} />
+                        </Box>
+                    )}
                 </List>
             </Paper>
+        </Box>
+    );
+
+    const renderControlsTab = () => (
+        <Box sx={{ maxWidth: 600, mx: 'auto', width: '100%', p: 2 }}>
+            <Paper elevation={3} sx={{ p: 2 }}>
+                <Typography variant="h5" gutterBottom>
+                    Controls {!isConnected && '(Disconnected)'}
+                </Typography>
+                <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2 }}>
+                    <Button
+                        variant="contained"
+                        color="primary"
+                        startIcon={<SkipIcon />}
+                        onClick={handleSkip}
+                        disabled={!isConnected}
+                    >
+                        Skip Current Song
+                    </Button>
+                </Box>
+            </Paper>
+        </Box>
+    );
+
+    return (
+        <Box sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: '100vh',
+            pb: 7
+        }}>
+            <Dialog
+                open={showNameModal}
+                onClose={() => { }}
+                disableEscapeKeyDown
+                disableBackdropClick
+                maxWidth="xs"
+                fullWidth
+            >
+                <DialogTitle sx={{ textAlign: 'center' }}>Enter Your Name</DialogTitle>
+                <DialogContent>
+                    <TextField
+                        autoFocus
+                        margin="dense"
+                        label="Your Name"
+                        fullWidth
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && handleNameSubmit()}
+                    />
+                    <FormControlLabel
+                        control={
+                            <Checkbox
+                                checked={rememberMe}
+                                onChange={(e) => setRememberMe(e.target.checked)}
+                                color="primary"
+                            />
+                        }
+                        label="Remember me"
+                    />
+                </DialogContent>
+                <DialogActions sx={{ justifyContent: 'center', pb: 2 }}>
+                    <Button
+                        onClick={handleNameSubmit}
+                        variant="contained"
+                        disabled={!username.trim()}
+                        sx={{ minWidth: 120 }}
+                    >
+                        Continue
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {currentTab === 0 && renderSearchTab()}
+            {currentTab === 1 && <Queue />}
+            {currentTab === 2 && renderControlsTab()}
+            {currentTab === 3 && <Settings />}
+
+            <BottomNavigation
+                value={currentTab}
+                onChange={(event, newValue) => {
+                    setCurrentTab(newValue);
+                }}
+                sx={{
+                    position: 'fixed',
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    borderTop: 1,
+                    borderColor: 'divider'
+                }}
+            >
+                <BottomNavigationAction label="Search" icon={<SearchIcon />} />
+                <BottomNavigationAction label="Queue" icon={<QueueIcon />} />
+                <BottomNavigationAction label="Controls" icon={<SkipIcon />} />
+                <BottomNavigationAction label="Settings" icon={<SettingsIcon />} />
+            </BottomNavigation>
         </Box>
     );
 };
