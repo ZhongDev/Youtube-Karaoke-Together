@@ -116,7 +116,7 @@ const Control = () => {
         setNextPageToken(null);
         try {
             console.log('[INFO] Searching for:', query);
-            const API_URL = window.location.protocol + '//' + window.location.hostname + ':5000';
+            const API_URL = window.location.protocol + '//' + window.location.hostname + ':8443';
             const response = await fetch(`${API_URL}/api/search?query=${encodeURIComponent(query)}`);
             if (!response.ok) {
                 throw new Error(`Search failed with status: ${response.status}`);
@@ -151,7 +151,7 @@ const Control = () => {
         try {
             const query = searchQuery.trim();
             console.log('[INFO] Loading more results for:', query, 'with token:', nextPageToken);
-            const API_URL = window.location.protocol + '//' + window.location.hostname + ':5000';
+            const API_URL = window.location.protocol + '//' + window.location.hostname + ':8443';
             const response = await fetch(
                 `${API_URL}/api/search?query=${encodeURIComponent(query)}&pageToken=${encodeURIComponent(nextPageToken)}`
             );

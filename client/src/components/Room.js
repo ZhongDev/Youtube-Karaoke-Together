@@ -8,7 +8,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 // Get the initial backend URL from localStorage or use default
 const getInitialBackendUrl = () => {
     const host = localStorage.getItem('backendHost') || 'http://localhost';
-    const port = localStorage.getItem('backendPort') || '5000';
+    const port = localStorage.getItem('backendPort') || '8443';
     return `${host}:${port}`;
 };
 
@@ -17,11 +17,11 @@ const getInitialBackendHost = () => {
 };
 
 const getInitialFrontendPort = () => {
-    return localStorage.getItem('frontendPort') || '3000';
+    return localStorage.getItem('frontendPort') || '443';
 };
 
 const getInitialBackendPort = () => {
-    return localStorage.getItem('backendPort') || '5000';
+    return localStorage.getItem('backendPort') || '8443';
 };
 
 const Room = () => {
@@ -389,7 +389,7 @@ const Room = () => {
                         value={backendPort}
                         onChange={handleBackendPortChange}
                         margin="normal"
-                        helperText="Enter the backend port (e.g., 5000)"
+                        helperText="Enter the backend port (e.g., 8443)"
                         type="number"
                     />
                     <TextField
@@ -398,7 +398,7 @@ const Room = () => {
                         value={frontendPort}
                         onChange={handleFrontendPortChange}
                         margin="normal"
-                        helperText="Enter the frontend port (e.g., 3000)"
+                        helperText="Enter the frontend port (e.g., 443)"
                         type="number"
                     />
                     <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end', gap: 1 }}>

@@ -17,7 +17,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
-        origin: "http://localhost:3000",
+        origin: "http://localhost:443",
         methods: ["GET", "POST"],
         credentials: true
     }
@@ -43,7 +43,7 @@ const rooms = new Map();
 
 // Generate QR code for a room
 async function generateRoomQR(roomId, origin) {
-    const backendUrl = origin ? origin : 'http://localhost:3000';
+    const backendUrl = origin ? origin : 'http://localhost:443';
     const url = `${backendUrl}/control/${roomId}`;
     return await QRCode.toDataURL(url);
 }
@@ -231,7 +231,7 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8443;
 server.listen(PORT, () => {
     console.log(`[INFO] Server running on port ${PORT}`);
 }); 
