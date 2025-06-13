@@ -7,7 +7,21 @@ import SettingsIcon from '@mui/icons-material/Settings';
 
 // Get the initial backend URL from localStorage or use default
 const getInitialBackendUrl = () => {
-    return localStorage.getItem('backendUrl') || 'http://localhost:5000';
+    const host = localStorage.getItem('backendHost') || 'http://localhost';
+    const port = localStorage.getItem('backendPort') || '5000';
+    return `${host}:${port}`;
+};
+
+const getInitialBackendHost = () => {
+    return localStorage.getItem('backendHost') || 'http://localhost';
+};
+
+const getInitialFrontendPort = () => {
+    return localStorage.getItem('frontendPort') || '3000';
+};
+
+const getInitialBackendPort = () => {
+    return localStorage.getItem('backendPort') || '5000';
 };
 
 const Room = () => {
@@ -19,6 +33,9 @@ const Room = () => {
     const [, forceUpdate] = useState({});
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [backendUrl, setBackendUrl] = useState(getInitialBackendUrl());
+    const [backendHost, setBackendHost] = useState(getInitialBackendHost());
+    const [backendPort, setBackendPort] = useState(getInitialBackendPort());
+    const [frontendPort, setFrontendPort] = useState(getInitialFrontendPort());
     const [socket, setSocket] = useState(null);
 
     // Initialize socket connection
@@ -38,17 +55,54 @@ const Room = () => {
 
     // Save backend URL to localStorage when it changes
     useEffect(() => {
-        localStorage.setItem('backendUrl', backendUrl);
-    }, [backendUrl]);
+        localStorage.setItem('backendHost', backendHost);
+    }, [backendHost]);
+
+    useEffect(() => {
+        localStorage.setItem('backendPort', backendPort);
+    }, [backendPort]);
+
+    useEffect(() => {
+        localStorage.setItem('frontendPort', frontendPort);
+    }, [frontendPort]);
 
     const handleSettingsOpen = () => setSettingsOpen(true);
     const handleSettingsClose = () => setSettingsOpen(false);
 
-    const handleBackendUrlChange = (event) => {
-        setBackendUrl(event.target.value);
+    const handleBackendHostChange = (event) => {
+        setBackendHost(event.target.value);
     };
 
+    const handleBackendPortChange = (event) => {
+        setBackendPort(event.target.value);
+    };
+
+    const handleFrontendPortChange = (event) => {
+        setFrontendPort(event.target.value);
+    };
+
+    // Update the fetchQRCode function to include roomId in its dependencies
+    const fetchQRCode = useCallback(async () => {
+        const API_URL = backendUrl;
+        console.log('[INFO] API_URL:', API_URL);
+        try {
+            const response = await fetch(`${API_URL}/api/rooms/${roomId}/qr`, {
+                method: 'GET',
+                headers: {
+                    'hostname': `${backendHost}:${frontendPort}`
+                }
+            });
+            const data = await response.json();
+            setQrCode(data.qrCode);
+            console.log('[INFO] QR code fetched:', data.qrCode);
+        } catch (error) {
+            console.error('[ERR] Failed to fetch QR code:', error);
+        }
+    }, [backendHost, roomId, frontendPort, backendUrl]);
+
     const handleSaveSettings = () => {
+        const fullBackendUrl = `${backendHost}:${backendPort}`;
+        setBackendUrl(fullBackendUrl);
         handleSettingsClose();
         // Socket will be recreated due to the useEffect dependency on backendUrl
         // Explicitly fetch new QR code after URL change
@@ -60,26 +114,7 @@ const Room = () => {
         if (roomId) {
             fetchQRCode();
         }
-    }, [backendUrl, roomId]);
-
-    // Update the fetchQRCode function to include roomId in its dependencies
-    const fetchQRCode = useCallback(async () => {
-        try {
-            const API_URL = backendUrl;
-            const response = await fetch(`${API_URL}/api/rooms/${roomId}/qr`, {
-                method: 'GET',
-                headers: {
-                    'hostname': API_URL
-                }
-            });
-            const data = await response.json();
-            setQrCode(data.qrCode);
-            console.log('[INFO] QR code fetched:', data.qrCode);
-            console.log('[INFO] API_URL:', API_URL);
-        } catch (error) {
-            console.error('[ERR] Failed to fetch QR code:', error);
-        }
-    }, [backendUrl, roomId]);
+    }, [roomId, fetchQRCode]);
 
     useEffect(() => {
         if (!roomId) {
@@ -296,7 +331,7 @@ const Room = () => {
                 >
                     <Box
                         component="a"
-                        href={`${backendUrl}/control/${roomId}`}
+                        href={`${backendHost}:${frontendPort}/control/${roomId}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         sx={{
@@ -306,13 +341,11 @@ const Room = () => {
                             alignItems: 'center'
                         }}
                     >
-                        {qrCode && (
-                            <img
-                                src={qrCode}
-                                alt="Room QR Code"
-                                style={{ maxWidth: '100%', justifyContent: 'center', alignItems: 'center' }}
-                            />
-                        )}
+                        <img
+                            src={qrCode}
+                            alt="Room QR Code"
+                            style={{ maxWidth: '100%', justifyContent: 'center', alignItems: 'center' }}
+                        />
                     </Box>
                     <Divider orientation="vertical" flexItem sx={{ mx: 2 }} />
                     <Box sx={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
@@ -344,11 +377,29 @@ const Room = () => {
                     </Typography>
                     <TextField
                         fullWidth
-                        label="Backend URL"
-                        value={backendUrl}
-                        onChange={handleBackendUrlChange}
+                        label="Backend Host"
+                        value={backendHost}
+                        onChange={handleBackendHostChange}
                         margin="normal"
-                        helperText="Enter the backend URL (e.g., http://localhost:5000)"
+                        helperText="Enter the backend URL (e.g., http://localhost)"
+                    />
+                    <TextField
+                        fullWidth
+                        label="Backend Port"
+                        value={backendPort}
+                        onChange={handleBackendPortChange}
+                        margin="normal"
+                        helperText="Enter the backend port (e.g., 5000)"
+                        type="number"
+                    />
+                    <TextField
+                        fullWidth
+                        label="Frontend Port"
+                        value={frontendPort}
+                        onChange={handleFrontendPortChange}
+                        margin="normal"
+                        helperText="Enter the frontend port (e.g., 3000)"
+                        type="number"
                     />
                     <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
                         <Button onClick={handleSettingsClose}>Cancel</Button>
