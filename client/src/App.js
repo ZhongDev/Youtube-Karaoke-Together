@@ -18,10 +18,7 @@ const darkTheme = createTheme({
 
 function App() {
   const [roomId] = useState(() => {
-    const savedRoomId = localStorage.getItem('roomId');
-    if (savedRoomId) return savedRoomId;
     const newRoomId = uuidv4();
-    localStorage.setItem('roomId', newRoomId);
     return newRoomId;
   });
 
