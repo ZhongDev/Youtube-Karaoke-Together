@@ -11,7 +11,6 @@ import {
     IconButton,
     Paper,
     Typography,
-    Badge,
     Chip,
     BottomNavigation,
     BottomNavigationAction,
@@ -34,6 +33,7 @@ import socket from '../socket';
 import { useParams } from 'react-router-dom';
 import Queue from './Queue';
 import Settings from './Settings';
+import config from '../ytkt-config.json';
 
 const Control = () => {
     const { roomId } = useParams();
@@ -57,6 +57,47 @@ const Control = () => {
     const loadingRef = useRef(false);
     const observer = useRef();
 
+    const loadMoreResults = useCallback(async () => {
+        if (!nextPageToken || loadingRef.current) return;
+
+        loadingRef.current = true;
+        setIsLoadingMore(true);
+
+        try {
+            const query = searchQuery.trim();
+            console.log('[INFO] Loading more results for:', query, 'with token:', nextPageToken);
+            const API_URL = `${config.backend.ssl ? 'https' : 'http'}://${config.backend.hostname}:${config.backend.port}`;
+            const response = await fetch(
+                `${API_URL}/api/search?query=${encodeURIComponent(query)}&pageToken=${encodeURIComponent(nextPageToken)}`
+            );
+            if (!response.ok) {
+                throw new Error(`Load more failed with status: ${response.status}`);
+            }
+            const data = await response.json();
+            console.log('[INFO] Load more results:', data);
+
+            const transformedResults = data.items.map(item => ({
+                id: item.id.videoId || item.id.playlistId,
+                title: item.snippet.title,
+                channelTitle: item.snippet.channelTitle,
+                isPlaylist: !!item.id.playlistId
+            }));
+
+            setSearchResults(prevResults => {
+                const existingIds = new Set(prevResults.map(r => r.id));
+                const newResults = transformedResults.filter(r => !existingIds.has(r.id));
+                return [...prevResults, ...newResults];
+            });
+
+            setNextPageToken(data.nextPageToken);
+        } catch (error) {
+            console.error('[ERR] Load more failed:', error);
+        } finally {
+            setIsLoadingMore(false);
+            loadingRef.current = false;
+        }
+    }, [nextPageToken, searchQuery]);
+
     const lastResultRef = useCallback(node => {
         if (loadingRef.current || !nextPageToken) return;
 
@@ -75,7 +116,7 @@ const Control = () => {
         if (node) {
             observer.current.observe(node);
         }
-    }, [nextPageToken]);
+    }, [nextPageToken, loadMoreResults]);
 
     useEffect(() => {
         if (!roomId) {
@@ -116,7 +157,7 @@ const Control = () => {
         setNextPageToken(null);
         try {
             console.log('[INFO] Searching for:', query);
-            const API_URL = window.location.protocol + '//' + window.location.hostname + ':8443';
+            const API_URL = `${config.backend.ssl ? 'https' : 'http'}://${config.backend.hostname}:${config.backend.port}`;
             const response = await fetch(`${API_URL}/api/search?query=${encodeURIComponent(query)}`);
             if (!response.ok) {
                 throw new Error(`Search failed with status: ${response.status}`);
@@ -139,47 +180,6 @@ const Control = () => {
             setSearchResults([]);
         } finally {
             setIsSearching(false);
-        }
-    };
-
-    const loadMoreResults = async () => {
-        if (!nextPageToken || loadingRef.current) return;
-
-        loadingRef.current = true;
-        setIsLoadingMore(true);
-
-        try {
-            const query = searchQuery.trim();
-            console.log('[INFO] Loading more results for:', query, 'with token:', nextPageToken);
-            const API_URL = window.location.protocol + '//' + window.location.hostname + ':8443';
-            const response = await fetch(
-                `${API_URL}/api/search?query=${encodeURIComponent(query)}&pageToken=${encodeURIComponent(nextPageToken)}`
-            );
-            if (!response.ok) {
-                throw new Error(`Load more failed with status: ${response.status}`);
-            }
-            const data = await response.json();
-            console.log('[INFO] Load more results:', data);
-
-            const transformedResults = data.items.map(item => ({
-                id: item.id.videoId || item.id.playlistId,
-                title: item.snippet.title,
-                channelTitle: item.snippet.channelTitle,
-                isPlaylist: !!item.id.playlistId
-            }));
-
-            setSearchResults(prevResults => {
-                const existingIds = new Set(prevResults.map(r => r.id));
-                const newResults = transformedResults.filter(r => !existingIds.has(r.id));
-                return [...prevResults, ...newResults];
-            });
-
-            setNextPageToken(data.nextPageToken);
-        } catch (error) {
-            console.error('[ERR] Load more failed:', error);
-        } finally {
-            setIsLoadingMore(false);
-            loadingRef.current = false;
         }
     };
 

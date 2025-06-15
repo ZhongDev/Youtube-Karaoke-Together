@@ -4,24 +4,25 @@ import YouTube from 'react-youtube';
 import io from 'socket.io-client';
 import { useParams } from 'react-router-dom';
 import SettingsIcon from '@mui/icons-material/Settings';
+import config from '../ytkt-config.json';
 
-// Get the initial backend URL from localStorage or use default
+// Get the initial backend URL from config
 const getInitialBackendUrl = () => {
-    const host = localStorage.getItem('backendHost') || 'http://localhost';
-    const port = localStorage.getItem('backendPort') || '8443';
+    const host = localStorage.getItem('backendHost') || `${config.backend.ssl ? 'https' : 'http'}://${config.backend.hostname}`;
+    const port = localStorage.getItem('backendPort') || `${config.backend.port}`;
     return `${host}:${port}`;
 };
 
 const getInitialBackendHost = () => {
-    return localStorage.getItem('backendHost') || 'http://localhost';
+    return localStorage.getItem('backendHost') || `${config.backend.ssl ? 'https' : 'http'}://${config.backend.hostname}`;
 };
 
 const getInitialFrontendPort = () => {
-    return localStorage.getItem('frontendPort') || '443';
+    return localStorage.getItem('frontendPort') || config.frontend.port;
 };
 
 const getInitialBackendPort = () => {
-    return localStorage.getItem('backendPort') || '8443';
+    return localStorage.getItem('backendPort') || config.backend.port;
 };
 
 const Room = () => {

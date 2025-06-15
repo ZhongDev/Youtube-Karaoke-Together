@@ -6,6 +6,18 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const QRCode = require('qrcode');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+
+// Load configuration
+let config;
+try {
+    // Try to load from client/src first
+    config = JSON.parse(fs.readFileSync(path.join(__dirname, 'client/src/ytkt-config.json'), 'utf8'));
+} catch (error) {
+    // Fallback to root directory
+    config = JSON.parse(fs.readFileSync(path.join(__dirname, 'ytkt-config.json'), 'utf8'));
+}
 
 // Log environment variables (excluding sensitive data)
 console.log('[INFO] Environment loaded:', {
@@ -13,11 +25,13 @@ console.log('[INFO] Environment loaded:', {
     YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY ? 'Configured' : 'Not configured'
 });
 
+console.log('[INFO] Configuration loaded:', config);
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
-        origin: "http://localhost:443",
+        origin: `${config.frontend.ssl ? 'https' : 'http'}://${config.frontend.hostname}:${config.frontend.port}`,
         methods: ["GET", "POST"],
         credentials: true
     }
@@ -56,8 +70,8 @@ setInterval(() => {
 
 // Generate QR code for a room
 async function generateRoomQR(roomId, origin) {
-    const backendUrl = origin ? origin : 'http://localhost:443';
-    const url = `${backendUrl}/control/${roomId}`;
+    const frontendUrl = origin ? origin : `${config.frontend.ssl ? 'https' : 'http'}://${config.frontend.hostname}:${config.frontend.port}`;
+    const url = `${frontendUrl}/control/${roomId}`;
     return await QRCode.toDataURL(url);
 }
 
@@ -247,7 +261,7 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = process.env.PORT || 8443;
+const PORT = config.backend.port;
 server.listen(PORT, () => {
     console.log(`[INFO] Server running on port ${PORT}`);
 }); 
