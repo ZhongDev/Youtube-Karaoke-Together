@@ -78,7 +78,8 @@ const Room = () => {
             const response = await fetch(`${API_URL}/api/rooms/${roomId}/qr`, {
                 method: 'GET',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'hostname': `${backendHost}:${frontendPort}`
                 }
             });
 
