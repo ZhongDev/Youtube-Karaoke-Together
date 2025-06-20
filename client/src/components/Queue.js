@@ -15,21 +15,26 @@ import {
     DialogTitle,
     DialogContent,
     DialogActions,
-    Button
+    Button,
+    Alert,
+    CircularProgress
 } from '@mui/material';
 import { PlaylistAdd as PlaylistIcon, Delete as DeleteIcon } from '@mui/icons-material';
-import socket from '../socket';
 import { useParams } from 'react-router-dom';
+import useSocket from '../hooks/useSocket';
 
 const Queue = () => {
     const { roomId } = useParams();
     const [queue, setQueue] = useState([]);
     const [currentVideo, setCurrentVideo] = useState(null);
-    const [isConnected, setIsConnected] = useState(false);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [videoToDelete, setVideoToDelete] = useState(null);
-    const hasJoinedRoomRef = useRef(false);
+    const [isLoading, setIsLoading] = useState(true);
 
+    // Use the socket hook
+    const { socket, isConnected, connectionError, joinRoom } = useSocket();
+
+    // Handle socket connection and room joining
     useEffect(() => {
         if (!roomId) {
             console.error('[ERR] No roomId provided');
@@ -38,64 +43,40 @@ const Queue = () => {
 
         console.log('[INFO] Queue component mounted, roomId:', roomId);
 
-        // Function to join room
-        const joinRoom = () => {
-            if (socket.connected && !hasJoinedRoomRef.current) {
-                console.log('[INFO] Joining room:', roomId);
-                socket.emit('join-room', roomId);
-                hasJoinedRoomRef.current = true;
-            }
-        };
+        if (!socket) return;
 
-        // If already connected, join room immediately
-        if (socket.connected) {
-            setIsConnected(true);
-            joinRoom();
+        // Join room when connected
+        if (isConnected) {
+            joinRoom(roomId);
         }
 
-        socket.on('connect', () => {
-            console.log('[INFO] Socket connected');
-            setIsConnected(true);
-            joinRoom();
-        });
-
-        socket.on('connect_error', (error) => {
-            console.error('[ERR] Socket connection error:', error);
-            setIsConnected(false);
-            hasJoinedRoomRef.current = false;
-        });
-
-        socket.on('disconnect', () => {
-            console.log('[INFO] Socket disconnected');
-            setIsConnected(false);
-            hasJoinedRoomRef.current = false;
-        });
-
-        socket.on('room-state', (room) => {
+        const handleRoomState = (room) => {
             console.log('[INFO] Received room state:', room);
             setQueue(room.queue || []);
             setCurrentVideo(room.currentVideo);
-        });
+            setIsLoading(false);
+        };
 
-        socket.on('queue-updated', (newQueue) => {
+        const handleQueueUpdated = (newQueue) => {
             console.log('[INFO] Queue updated:', newQueue);
             setQueue(newQueue);
-        });
+        };
 
-        socket.on('video-changed', (video) => {
+        const handleVideoChanged = (video) => {
             console.log('[INFO] Video changed:', video);
             setCurrentVideo(video);
-        });
+        };
+
+        socket.on('room-state', handleRoomState);
+        socket.on('queue-updated', handleQueueUpdated);
+        socket.on('video-changed', handleVideoChanged);
 
         return () => {
-            socket.off('connect');
-            socket.off('connect_error');
-            socket.off('disconnect');
-            socket.off('room-state');
-            socket.off('queue-updated');
-            socket.off('video-changed');
+            socket.off('room-state', handleRoomState);
+            socket.off('queue-updated', handleQueueUpdated);
+            socket.off('video-changed', handleVideoChanged);
         };
-    }, [roomId]);
+    }, [roomId, socket, isConnected, joinRoom]);
 
     const handleDeleteClick = (video, index) => {
         setVideoToDelete({ video, index });
@@ -121,6 +102,18 @@ const Queue = () => {
                 <Typography variant="h5" gutterBottom>
                     Current Queue {!isConnected && '(Disconnected)'}
                 </Typography>
+
+                {connectionError && (
+                    <Alert severity="error" sx={{ mb: 2 }}>
+                        Connection Error: {connectionError}
+                    </Alert>
+                )}
+
+                {isLoading && isConnected && (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                        <CircularProgress />
+                    </Box>
+                )}
 
                 {currentVideo && (
                     <>

@@ -9,6 +9,9 @@ A collaborative YouTube video queuing system that allows multiple users to watch
 - Mobile-friendly control panel accessible via QR code
 - YouTube video search and queue functionality
 - Synchronized video playback across all users
+- **YouTube API Compliant** - Full legal compliance with YouTube ToS
+- **Privacy-First Design** - Comprehensive privacy protection
+- **Terms of Service Protection** - Clear user agreements
 
 ## Prerequisites
 
@@ -40,19 +43,18 @@ npm install
 
 4. Create a `.env` file in the root directory and add your YouTube API key:
 
-```
-YOUTUBE_API_KEY=your_api_key_here
-```
-
-5. Update the YouTube API key in `client/src/components/Control.js`:
-
-```javascript
-const response = await fetch(
-  `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${searchQuery}&type=video&key=YOUR_API_KEY`
-);
+```bash
+cp env.example .env
 ```
 
-Replace `YOUR_API_KEY` with your actual YouTube API key.
+Then edit the `.env` file and add your actual API key.
+
+5. Get your YouTube Data API key:
+   - Go to the [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select an existing one
+   - Enable the YouTube Data API v3
+   - Create credentials (API key)
+   - Copy the API key to your `.env` file
 
 ## Running the Application
 
@@ -73,10 +75,27 @@ npm start
 
 ## Usage
 
-1. Create a new room by clicking the "Create Room" button on the home page
-2. Share the QR code with mobile users to allow them to control the queue
-3. Use the mobile control panel to search for and add videos to the queue
-4. Videos will play automatically in the main room as they are queued
+1. Visit the homepage and accept the Terms of Service
+2. Create a new room by clicking the "Create Room" button
+3. Share the QR code with mobile users to allow them to control the queue
+4. Use the mobile control panel to search for and add videos to the queue
+5. Videos will play automatically in the main room as they are queued
+
+## Legal Compliance
+
+This application is fully compliant with YouTube API Terms of Service:
+
+- ✅ **Terms of Service Binding**: Users explicitly agree to YouTube ToS
+- ✅ **Privacy Policy**: Comprehensive privacy protection disclosure
+- ✅ **Contact Information**: Multiple ways to reach us for support
+- ✅ **Data Transparency**: Clear explanation of data usage
+- ✅ **Google Privacy Policy**: Referenced and linked appropriately
+
+### Important Legal Pages
+
+- **Privacy Policy**: `/privacy-policy` - How we handle your data
+- **Terms of Service**: `/terms-of-service` - User agreements including YouTube ToS
+- **Contact Us**: `/contact` - Support and legal contact information
 
 ## Technologies Used
 

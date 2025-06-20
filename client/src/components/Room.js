@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Box, Divider, Paper, Typography, List, ListItem, ListItemText, ListItemAvatar, Avatar, IconButton, Modal, TextField, Button } from '@mui/material';
+import { Box, Divider, Paper, Typography, List, ListItem, ListItemText, ListItemAvatar, Avatar, IconButton, Modal, TextField, Button, Alert, CircularProgress } from '@mui/material';
 import YouTube from 'react-youtube';
-import io from 'socket.io-client';
 import { useParams } from 'react-router-dom';
 import SettingsIcon from '@mui/icons-material/Settings';
+import useSocket from '../hooks/useSocket';
 import config from '../ytkt-config.json';
 
 // Get the initial backend URL from config
@@ -28,31 +28,18 @@ const getInitialBackendPort = () => {
 const Room = () => {
     const { roomId } = useParams();
     const playerRef = useRef(null);
-    const queueRef = useRef([]);
-    const isConnectedRef = useRef(false);
     const [qrCode, setQrCode] = useState(null);
-    const [, forceUpdate] = useState({});
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [backendUrl, setBackendUrl] = useState(getInitialBackendUrl());
     const [backendHost, setBackendHost] = useState(getInitialBackendHost());
     const [backendPort, setBackendPort] = useState(getInitialBackendPort());
     const [frontendPort, setFrontendPort] = useState(getInitialFrontendPort());
-    const [socket, setSocket] = useState(null);
+    const [currentVideo, setCurrentVideo] = useState(null);
+    const [queue, setQueue] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
 
-    // Initialize socket connection
-    useEffect(() => {
-        const newSocket = io(backendUrl, {
-            withCredentials: true,
-            transports: ['websocket', 'polling']
-        });
-        setSocket(newSocket);
-
-        return () => {
-            if (newSocket) {
-                newSocket.disconnect();
-            }
-        };
-    }, [backendUrl]);
+    // Use the new socket hook
+    const { socket, isConnected, connectionError, joinRoom } = useSocket(backendUrl);
 
     // Save backend URL to localStorage when it changes
     useEffect(() => {
@@ -90,16 +77,23 @@ const Room = () => {
             const response = await fetch(`${API_URL}/api/rooms/${roomId}/qr`, {
                 method: 'GET',
                 headers: {
-                    'hostname': `${backendHost}:${frontendPort}`
+                    'Content-Type': 'application/json'
                 }
             });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
             const data = await response.json();
             setQrCode(data.qrCode);
-            console.log('[INFO] QR code fetched:', data.qrCode);
+            console.log('[INFO] QR code fetched successfully');
         } catch (error) {
             console.error('[ERR] Failed to fetch QR code:', error);
+            // Show user-friendly error message
+            setQrCode(null);
         }
-    }, [backendHost, roomId, frontendPort, backendUrl]);
+    }, [backendUrl, roomId]);
 
     const handleSaveSettings = () => {
         const fullBackendUrl = `${backendHost}:${backendPort}`;
@@ -117,6 +111,7 @@ const Room = () => {
         }
     }, [roomId, fetchQRCode]);
 
+    // Handle socket connection and room joining
     useEffect(() => {
         if (!roomId) {
             console.error('[ERR] No roomId provided');
@@ -127,27 +122,17 @@ const Room = () => {
 
         if (!socket) return;
 
-        socket.on('connect', () => {
-            console.log('[INFO] Socket connected');
-            isConnectedRef.current = true;
-            forceUpdate({});
-            socket.emit('join-room', roomId);
-        });
+        // Join room when connected
+        if (isConnected) {
+            joinRoom(roomId);
+        }
 
-        socket.on('connect_error', (error) => {
-            console.error('[ERR] Socket connection error:', error);
-            isConnectedRef.current = false;
-            forceUpdate({});
-        });
-
-        socket.on('disconnect', () => {
-            console.log('[INFO] Socket disconnected');
-            isConnectedRef.current = false;
-            forceUpdate({});
-        });
-
-        socket.on('room-state', (room) => {
+        const handleRoomState = (room) => {
             console.log('[INFO] Received room state:', room);
+            setCurrentVideo(room.currentVideo);
+            setQueue(room.queue || []);
+            setIsLoading(false);
+
             if (room.currentVideo && playerRef.current) {
                 playerRef.current.loadVideoById({
                     videoId: room.currentVideo.id,
@@ -155,12 +140,12 @@ const Room = () => {
                 });
                 playerRef.current.playVideo();
             }
-            queueRef.current = room.queue;
-            forceUpdate({});
-        });
+        };
 
-        socket.on('video-changed', (video) => {
+        const handleVideoChanged = (video) => {
             console.log('[INFO] Video changed:', video);
+            setCurrentVideo(video);
+
             if (video === null) {
                 if (playerRef.current) {
                     playerRef.current.pauseVideo();
@@ -174,24 +159,23 @@ const Room = () => {
                 });
                 playerRef.current.playVideo();
             }
-            forceUpdate({});
-        });
+        };
 
-        socket.on('queue-updated', (newQueue) => {
+        const handleQueueUpdated = (newQueue) => {
             console.log('[INFO] Queue updated:', newQueue);
-            queueRef.current = newQueue;
-            forceUpdate({});
-        });
+            setQueue(newQueue);
+        };
+
+        socket.on('room-state', handleRoomState);
+        socket.on('video-changed', handleVideoChanged);
+        socket.on('queue-updated', handleQueueUpdated);
 
         return () => {
-            socket.off('connect');
-            socket.off('connect_error');
-            socket.off('disconnect');
-            socket.off('room-state');
-            socket.off('video-changed');
-            socket.off('queue-updated');
+            socket.off('room-state', handleRoomState);
+            socket.off('video-changed', handleVideoChanged);
+            socket.off('queue-updated', handleQueueUpdated);
         };
-    }, [roomId, socket, backendUrl]);
+    }, [roomId, socket, isConnected, joinRoom]);
 
     const onPlayerReady = (event) => {
         console.log('[INFO] Player ready');
@@ -238,7 +222,7 @@ const Room = () => {
                         bgcolor: 'background.paper'
                     }}
                 >
-                    {!isConnectedRef.current ? (
+                    {!isConnected ? (
                         <Box sx={{
                             flex: 1,
                             display: 'flex',
@@ -246,7 +230,18 @@ const Room = () => {
                             justifyContent: 'center',
                             bgcolor: 'black'
                         }}>
-                            <Typography variant="h5">Connecting...</Typography>
+                            {connectionError ? (
+                                <Alert severity="error" sx={{ m: 2 }}>
+                                    Connection Error: {connectionError}
+                                </Alert>
+                            ) : isLoading ? (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                    <CircularProgress />
+                                    <Typography variant="h5">Connecting...</Typography>
+                                </Box>
+                            ) : (
+                                <Typography variant="h5">Waiting for connection...</Typography>
+                            )}
                         </Box>
                     ) : (
                         <Box sx={{
@@ -300,10 +295,22 @@ const Room = () => {
                     }}
                 >
                     <Typography variant="h6" sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-                        Queue {!isConnectedRef.current && '(Disconnected)'}
+                        Queue {!isConnected && '(Disconnected)'}
                     </Typography>
+
+                    {queue.length === 0 && (
+                        <Box sx={{ p: 2, bgcolor: 'info.light', color: 'info.contrastText', fontSize: '0.75rem' }}>
+                            <Typography variant="caption">
+                                This application uses YouTube API Services. By using this service, you agree to the{' '}
+                                <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer"
+                                    style={{ color: 'inherit', textDecoration: 'underline' }}>
+                                    YouTube Terms of Service
+                                </a>.
+                            </Typography>
+                        </Box>
+                    )}
                     <List sx={{ flex: 1, overflow: 'auto' }}>
-                        {queueRef.current.map((video, index) => (
+                        {queue.map((video, index) => (
                             <ListItem key={index} divider>
                                 <ListItemAvatar>
                                     <Avatar

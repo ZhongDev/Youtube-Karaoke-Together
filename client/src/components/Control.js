@@ -20,7 +20,9 @@ import {
     DialogContent,
     DialogActions,
     FormControlLabel,
-    Checkbox
+    Checkbox,
+    Alert,
+    Snackbar
 } from '@mui/material';
 import {
     Search as SearchIcon,
@@ -29,20 +31,20 @@ import {
     SkipNext as SkipIcon
 } from '@mui/icons-material';
 import { Add as AddIcon, PlaylistAdd as PlaylistIcon } from '@mui/icons-material';
-import socket from '../socket';
 import { useParams } from 'react-router-dom';
 import Queue from './Queue';
 import Settings from './Settings';
+import useSocket from '../hooks/useSocket';
 import config from '../ytkt-config.json';
 
 const Control = () => {
     const { roomId } = useParams();
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
-    const [isConnected, setIsConnected] = useState(false);
     const [isSearching, setIsSearching] = useState(false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [nextPageToken, setNextPageToken] = useState(null);
+    const [notification, setNotification] = useState({ open: false, message: '', severity: 'info' });
     const [username, setUsername] = useState(() => {
         const savedUsername = localStorage.getItem('karaokeUsername');
         return savedUsername || '';
@@ -54,8 +56,12 @@ const Control = () => {
         return !localStorage.getItem('karaokeRememberMe');
     });
     const [currentTab, setCurrentTab] = useState(0);
+    const [hasSearched, setHasSearched] = useState(false);
     const loadingRef = useRef(false);
     const observer = useRef();
+
+    // Use the socket hook
+    const { socket, isConnected, connectionError, joinRoom } = useSocket();
 
     const loadMoreResults = useCallback(async () => {
         if (!nextPageToken || loadingRef.current) return;
@@ -118,6 +124,7 @@ const Control = () => {
         }
     }, [nextPageToken, loadMoreResults]);
 
+    // Join room when connected
     useEffect(() => {
         if (!roomId) {
             console.error('[ERR] No roomId provided');
@@ -126,28 +133,21 @@ const Control = () => {
 
         console.log('[INFO] Control component mounted, roomId:', roomId);
 
-        socket.on('connect', () => {
-            console.log('[INFO] Socket connected');
-            setIsConnected(true);
-            socket.emit('join-room', roomId);
-        });
+        if (isConnected) {
+            joinRoom(roomId);
+        }
+    }, [roomId, isConnected, joinRoom]);
 
-        socket.on('connect_error', (error) => {
-            console.error('[ERR] Socket connection error:', error);
-            setIsConnected(false);
-        });
-
-        socket.on('disconnect', () => {
-            console.log('[INFO] Socket disconnected');
-            setIsConnected(false);
-        });
-
-        return () => {
-            socket.off('connect');
-            socket.off('connect_error');
-            socket.off('disconnect');
-        };
-    }, [roomId]);
+    // Show connection error notifications
+    useEffect(() => {
+        if (connectionError) {
+            setNotification({
+                open: true,
+                message: `Connection Error: ${connectionError}`,
+                severity: 'error'
+            });
+        }
+    }, [connectionError]);
 
     const handleSearch = async () => {
         const query = searchQuery.trim();
@@ -155,6 +155,7 @@ const Control = () => {
 
         setIsSearching(true);
         setNextPageToken(null);
+        setHasSearched(true); // Mark that a search has been performed
         try {
             console.log('[INFO] Searching for:', query);
             const API_URL = `${config.backend.ssl ? 'https' : 'http'}://${config.backend.hostname}:${config.backend.port}`;
@@ -178,6 +179,11 @@ const Control = () => {
         } catch (error) {
             console.error('[ERR] Search failed:', error);
             setSearchResults([]);
+            setNotification({
+                open: true,
+                message: `Search failed: ${error.message}`,
+                severity: 'error'
+            });
         } finally {
             setIsSearching(false);
         }
@@ -193,6 +199,20 @@ const Control = () => {
     const addToQueue = (video) => {
         if (!username.trim()) {
             setCurrentTab(2); // Switch to settings tab
+            setNotification({
+                open: true,
+                message: 'Please set your name in settings first!',
+                severity: 'warning'
+            });
+            return;
+        }
+
+        if (!isConnected) {
+            setNotification({
+                open: true,
+                message: 'Not connected to server. Please wait for connection.',
+                severity: 'error'
+            });
             return;
         }
 
@@ -202,6 +222,12 @@ const Control = () => {
             addedBy: username
         };
         socket.emit('add-to-queue', { roomId, video: videoData });
+
+        setNotification({
+            open: true,
+            message: `Added "${video.title}" to queue!`,
+            severity: 'success'
+        });
     };
 
     const handleNameSubmit = () => {
@@ -232,6 +258,17 @@ const Control = () => {
                 <Typography variant="h5" gutterBottom>
                     Search
                 </Typography>
+                {!hasSearched && (
+                    <Box sx={{ mb: 2, p: 1, bgcolor: 'info.light', borderRadius: 1 }}>
+                        <Typography variant="caption" sx={{ color: 'info.contrastText' }}>
+                            This service uses YouTube API Services. By using this app, you agree to the{' '}
+                            <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer"
+                                style={{ color: 'inherit', textDecoration: 'underline' }}>
+                                YouTube Terms of Service
+                            </a>.
+                        </Typography>
+                    </Box>
+                )}
                 <Box sx={{ display: 'flex', gap: 1 }}>
                     <TextField
                         fullWidth
@@ -404,6 +441,21 @@ const Control = () => {
                 <BottomNavigationAction label="Controls" icon={<SkipIcon />} />
                 <BottomNavigationAction label="Settings" icon={<SettingsIcon />} />
             </BottomNavigation>
+
+            <Snackbar
+                open={notification.open}
+                autoHideDuration={4000}
+                onClose={() => setNotification({ ...notification, open: false })}
+                anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+            >
+                <Alert
+                    onClose={() => setNotification({ ...notification, open: false })}
+                    severity={notification.severity}
+                    sx={{ width: '100%' }}
+                >
+                    {notification.message}
+                </Alert>
+            </Snackbar>
         </Box>
     );
 };
