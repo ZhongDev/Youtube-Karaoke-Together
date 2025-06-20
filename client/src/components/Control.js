@@ -53,7 +53,20 @@ const Control = () => {
         return localStorage.getItem('karaokeRememberMe') === 'true';
     });
     const [showNameModal, setShowNameModal] = useState(() => {
-        return !localStorage.getItem('karaokeRememberMe');
+        const rememberMe = localStorage.getItem('karaokeRememberMe');
+        const hasUsername = localStorage.getItem('karaokeUsername');
+
+        // Show modal if user hasn't chosen to remember (rememberMe !== 'true')
+        // This covers:
+        // 1. First time users (rememberMe is null)
+        // 2. Users who explicitly chose not to remember (rememberMe === 'false')
+        // 3. Users with no username
+        if (rememberMe !== 'true') {
+            return true;
+        }
+
+        // If remember is true but no username, still show modal
+        return !hasUsername;
     });
     const [currentTab, setCurrentTab] = useState(0);
     const [hasSearched, setHasSearched] = useState(false);
@@ -61,7 +74,7 @@ const Control = () => {
     const observer = useRef();
 
     // Use the socket hook
-    const { socket, isConnected, connectionError, joinRoom } = useSocket();
+    const { socket, isConnected, connectionError, serverError, clearServerError, joinRoom } = useSocket();
 
     const loadMoreResults = useCallback(async () => {
         if (!nextPageToken || loadingRef.current) return;
@@ -124,6 +137,21 @@ const Control = () => {
         }
     }, [nextPageToken, loadMoreResults]);
 
+    // Handle initial username setup
+    useEffect(() => {
+        const rememberMe = localStorage.getItem('karaokeRememberMe');
+        const savedUsername = localStorage.getItem('karaokeUsername');
+
+        // If user chose not to remember, we should clear the username on page load
+        // to force them to enter it again
+        if (rememberMe === 'false') {
+            localStorage.removeItem('karaokeUsername');
+            setUsername('');
+        } else if (savedUsername) {
+            setUsername(savedUsername);
+        }
+    }, []);
+
     // Join room when connected
     useEffect(() => {
         if (!roomId) {
@@ -148,6 +176,31 @@ const Control = () => {
             });
         }
     }, [connectionError]);
+
+    // Show server error notifications
+    useEffect(() => {
+        if (serverError) {
+            setNotification({
+                open: true,
+                message: `Server Error: ${serverError.message}`,
+                severity: 'error'
+            });
+            // Clear the server error after showing notification
+            clearServerError();
+        }
+    }, [serverError, clearServerError]);
+
+    // Listen for username changes from Settings
+    useEffect(() => {
+        const handleStorageChange = (e) => {
+            if (e.key === 'karaokeUsername' && e.newValue) {
+                setUsername(e.newValue);
+            }
+        };
+
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
+    }, []);
 
     const handleSearch = async () => {
         const query = searchQuery.trim();

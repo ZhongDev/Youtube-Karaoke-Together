@@ -188,64 +188,153 @@ io.on('connection', (socket) => {
 
     socket.on('join-room', (roomId) => {
         console.log(`[INFO] Socket ${socket.id} attempting to join room: ${roomId}`);
-        currentRoom = roomId;
-        socket.join(roomId);
-        console.log(`[INFO] Socket ${socket.id} joined room: ${roomId}`);
 
-        const room = rooms.get(roomId);
-        if (room) {
-            console.log(`[INFO] Sending room state to socket ${socket.id}:`, room);
-            socket.emit('room-state', room);
-        } else {
-            console.log(`[ERR] Room ${roomId} not found for socket ${socket.id}`);
+        try {
+            if (!roomId || typeof roomId !== 'string') {
+                const error = 'Invalid room ID provided';
+                console.log(`[ERR] ${error} from socket ${socket.id}`);
+                socket.emit('error-message', { type: 'join-room', message: error });
+                return;
+            }
+
+            currentRoom = roomId;
+            socket.join(roomId);
+            console.log(`[INFO] Socket ${socket.id} joined room: ${roomId}`);
+
+            const room = rooms.get(roomId);
+            if (room) {
+                console.log(`[INFO] Sending room state to socket ${socket.id}:`, room);
+                socket.emit('room-state', room);
+            } else {
+                const error = `Room ${roomId} not found`;
+                console.log(`[ERR] ${error} for socket ${socket.id}`);
+                socket.emit('error-message', { type: 'join-room', message: error });
+            }
+        } catch (error) {
+            console.log(`[ERR] Failed to join room ${roomId} for socket ${socket.id}:`, error.message);
+            socket.emit('error-message', { type: 'join-room', message: 'Failed to join room' });
         }
     });
 
     socket.on('add-to-queue', ({ roomId, video }) => {
         console.log(`[INFO] Received add-to-queue event from socket ${socket.id} for room ${roomId}:`, video);
-        const room = rooms.get(roomId);
-        if (room) {
-            // If this is the first video and no video is currently playing, set it as current
-            if (room.queue.length === 0 && !room.currentVideo) {
-                console.log(`[INFO] Setting first video as current: ${video.title}`);
-                room.currentVideo = video;
-                io.to(roomId).emit('video-changed', video);
-            } else {
-                room.queue.push(video);
-                console.log(`[INFO] Added video "${video.title}" to queue`);
+
+        try {
+            if (!roomId || !video) {
+                const error = 'Missing room ID or video data';
+                console.log(`[ERR] ${error} from socket ${socket.id}`);
+                socket.emit('error-message', { type: 'add-to-queue', message: error });
+                return;
             }
-            console.log(`[INFO] Current queue length: ${room.queue.length}`);
-            io.to(roomId).emit('queue-updated', room.queue);
-        } else {
-            console.log(`[ERR] Room ${roomId} not found when adding video`);
+
+            if (!video.id || !video.title) {
+                const error = 'Invalid video data provided';
+                console.log(`[ERR] ${error} from socket ${socket.id}`);
+                socket.emit('error-message', { type: 'add-to-queue', message: error });
+                return;
+            }
+
+            const room = rooms.get(roomId);
+            if (room) {
+                // If this is the first video and no video is currently playing, set it as current
+                if (room.queue.length === 0 && !room.currentVideo) {
+                    console.log(`[INFO] Setting first video as current: ${video.title}`);
+                    room.currentVideo = video;
+                    io.to(roomId).emit('video-changed', video);
+                } else {
+                    room.queue.push(video);
+                    console.log(`[INFO] Added video "${video.title}" to queue`);
+                }
+                console.log(`[INFO] Current queue length: ${room.queue.length}`);
+                io.to(roomId).emit('queue-updated', room.queue);
+            } else {
+                const error = `Room ${roomId} not found`;
+                console.log(`[ERR] ${error} when adding video from socket ${socket.id}`);
+                socket.emit('error-message', { type: 'add-to-queue', message: error });
+            }
+        } catch (error) {
+            console.log(`[ERR] Failed to add video to queue for socket ${socket.id}:`, error.message);
+            socket.emit('error-message', { type: 'add-to-queue', message: 'Failed to add video to queue' });
         }
     });
 
     socket.on('play-next', (roomId) => {
         console.log(`[INFO] Received play-next event from socket ${socket.id} for room ${roomId}`);
-        const room = rooms.get(roomId);
-        if (room && room.queue.length > 0) {
-            room.currentVideo = room.queue.shift();
-            console.log(`[INFO] Playing next video "${room.currentVideo.title}" in room ${roomId}`);
-            io.to(roomId).emit('video-changed', room.currentVideo);
-            io.to(roomId).emit('queue-updated', room.queue);
-        } else {
-            console.log(`[INFO] No videos in queue for room ${roomId}`);
-            room.currentVideo = null;
-            io.to(roomId).emit('video-changed', null);
-            io.to(roomId).emit('queue-updated', []);
+
+        try {
+            if (!roomId || typeof roomId !== 'string') {
+                const error = 'Invalid room ID provided';
+                console.log(`[ERR] ${error} from socket ${socket.id}`);
+                socket.emit('error-message', { type: 'play-next', message: error });
+                return;
+            }
+
+            const room = rooms.get(roomId);
+            if (!room) {
+                const error = `Room ${roomId} not found`;
+                console.log(`[ERR] ${error} when playing next from socket ${socket.id}`);
+                socket.emit('error-message', { type: 'play-next', message: error });
+                return;
+            }
+
+            if (room.queue.length > 0) {
+                room.currentVideo = room.queue.shift();
+                console.log(`[INFO] Playing next video "${room.currentVideo.title}" in room ${roomId}`);
+                io.to(roomId).emit('video-changed', room.currentVideo);
+                io.to(roomId).emit('queue-updated', room.queue);
+            } else {
+                console.log(`[INFO] No videos in queue for room ${roomId}`);
+                if (room.currentVideo) {
+                    room.currentVideo = null;
+                    io.to(roomId).emit('video-changed', null);
+                }
+                io.to(roomId).emit('queue-updated', []);
+            }
+        } catch (error) {
+            console.log(`[ERR] Failed to play next video for socket ${socket.id}:`, error.message);
+            socket.emit('error-message', { type: 'play-next', message: 'Failed to skip to next video' });
         }
     });
 
     socket.on('remove-from-queue', ({ roomId, index }) => {
         console.log(`[INFO] Received remove-from-queue event from socket ${socket.id} for room ${roomId}, index: ${index}`);
-        const room = rooms.get(roomId);
-        if (room && room.queue.length > index) {
+
+        try {
+            if (!roomId || typeof roomId !== 'string') {
+                const error = 'Invalid room ID provided';
+                console.log(`[ERR] ${error} from socket ${socket.id}`);
+                socket.emit('error-message', { type: 'remove-from-queue', message: error });
+                return;
+            }
+
+            if (typeof index !== 'number' || index < 0) {
+                const error = 'Invalid queue index provided';
+                console.log(`[ERR] ${error} from socket ${socket.id}`);
+                socket.emit('error-message', { type: 'remove-from-queue', message: error });
+                return;
+            }
+
+            const room = rooms.get(roomId);
+            if (!room) {
+                const error = `Room ${roomId} not found`;
+                console.log(`[ERR] ${error} when removing from queue from socket ${socket.id}`);
+                socket.emit('error-message', { type: 'remove-from-queue', message: error });
+                return;
+            }
+
+            if (room.queue.length <= index) {
+                const error = `Invalid queue index ${index} (queue has ${room.queue.length} items)`;
+                console.log(`[ERR] ${error} for room ${roomId} from socket ${socket.id}`);
+                socket.emit('error-message', { type: 'remove-from-queue', message: 'Video not found in queue' });
+                return;
+            }
+
             const removedVideo = room.queue.splice(index, 1)[0];
             console.log(`[INFO] Removed video "${removedVideo.title}" from queue`);
             io.to(roomId).emit('queue-updated', room.queue);
-        } else {
-            console.log(`[ERR] Invalid queue index ${index} for room ${roomId}`);
+        } catch (error) {
+            console.log(`[ERR] Failed to remove video from queue for socket ${socket.id}:`, error.message);
+            socket.emit('error-message', { type: 'remove-from-queue', message: 'Failed to remove video from queue' });
         }
     });
 

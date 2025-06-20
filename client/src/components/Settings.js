@@ -15,7 +15,8 @@ const Settings = () => {
         return savedUsername || '';
     });
     const [rememberMe, setRememberMe] = useState(() => {
-        return localStorage.getItem('karaokeRememberMe') === 'true';
+        const rememberMeValue = localStorage.getItem('karaokeRememberMe');
+        return rememberMeValue === 'true';
     });
 
     // Listen for changes to localStorage
@@ -34,12 +35,23 @@ const Settings = () => {
     const handleSave = () => {
         if (username.trim()) {
             if (rememberMe) {
+                // Save username and remember preference
                 localStorage.setItem('karaokeUsername', username);
                 localStorage.setItem('karaokeRememberMe', 'true');
             } else {
-                localStorage.removeItem('karaokeUsername');
-                localStorage.removeItem('karaokeRememberMe');
+                // Don't save username to localStorage, just set remember preference to false
+                // This ensures username is cleared on page refresh
+                localStorage.setItem('karaokeRememberMe', 'false');
+                // But temporarily set it for current session notification
+                localStorage.setItem('karaokeUsername', username);
             }
+
+            // Trigger a storage event to notify other components
+            window.dispatchEvent(new StorageEvent('storage', {
+                key: 'karaokeUsername',
+                newValue: username,
+                oldValue: localStorage.getItem('karaokeUsername')
+            }));
         }
     };
 

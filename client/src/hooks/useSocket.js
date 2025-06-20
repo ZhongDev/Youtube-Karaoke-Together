@@ -8,6 +8,7 @@ let socketInstance = null;
 const useSocket = (backendUrl = null) => {
     const [isConnected, setIsConnected] = useState(false);
     const [connectionError, setConnectionError] = useState(null);
+    const [serverError, setServerError] = useState(null);
     const hasJoinedRoomRef = useRef(new Set());
 
     useEffect(() => {
@@ -54,11 +55,21 @@ const useSocket = (backendUrl = null) => {
             setConnectionError(error.message || 'Socket error');
         };
 
+        const handleServerError = (errorData) => {
+            console.error('[ERR] Server error:', errorData);
+            setServerError({
+                type: errorData.type,
+                message: errorData.message,
+                timestamp: Date.now()
+            });
+        };
+
         // Set up event listeners
         socket.on('connect', handleConnect);
         socket.on('connect_error', handleConnectError);
         socket.on('disconnect', handleDisconnect);
         socket.on('error', handleError);
+        socket.on('error-message', handleServerError);
 
         // Set initial connection state
         setIsConnected(socket.connected);
@@ -68,6 +79,7 @@ const useSocket = (backendUrl = null) => {
             socket.off('connect_error', handleConnectError);
             socket.off('disconnect', handleDisconnect);
             socket.off('error', handleError);
+            socket.off('error-message', handleServerError);
         };
     }, [backendUrl]);
 
@@ -87,10 +99,16 @@ const useSocket = (backendUrl = null) => {
         }
     };
 
+    const clearServerError = () => {
+        setServerError(null);
+    };
+
     return {
         socket: socketInstance,
         isConnected,
         connectionError,
+        serverError,
+        clearServerError,
         joinRoom,
         leaveRoom
     };

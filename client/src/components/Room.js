@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Box, Divider, Paper, Typography, List, ListItem, ListItemText, ListItemAvatar, Avatar, IconButton, Modal, TextField, Button, Alert, CircularProgress } from '@mui/material';
+import { Box, Divider, Paper, Typography, List, ListItem, ListItemText, ListItemAvatar, Avatar, IconButton, Modal, TextField, Button, Alert, CircularProgress, Snackbar } from '@mui/material';
 import YouTube from 'react-youtube';
 import { useParams } from 'react-router-dom';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -37,9 +37,10 @@ const Room = () => {
     const [currentVideo, setCurrentVideo] = useState(null);
     const [queue, setQueue] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [notification, setNotification] = useState({ open: false, message: '', severity: 'info' });
 
     // Use the new socket hook
-    const { socket, isConnected, connectionError, joinRoom } = useSocket(backendUrl);
+    const { socket, isConnected, connectionError, serverError, clearServerError, joinRoom } = useSocket(backendUrl);
 
     // Save backend URL to localStorage when it changes
     useEffect(() => {
@@ -176,6 +177,19 @@ const Room = () => {
             socket.off('queue-updated', handleQueueUpdated);
         };
     }, [roomId, socket, isConnected, joinRoom]);
+
+    // Show server error notifications
+    useEffect(() => {
+        if (serverError) {
+            setNotification({
+                open: true,
+                message: `Server Error: ${serverError.message}`,
+                severity: 'error'
+            });
+            // Clear the server error after showing notification
+            clearServerError();
+        }
+    }, [serverError, clearServerError]);
 
     const onPlayerReady = (event) => {
         console.log('[INFO] Player ready');
@@ -415,6 +429,21 @@ const Room = () => {
                     </Box>
                 </Box>
             </Modal>
+
+            <Snackbar
+                open={notification.open}
+                autoHideDuration={4000}
+                onClose={() => setNotification({ ...notification, open: false })}
+                anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+            >
+                <Alert
+                    onClose={() => setNotification({ ...notification, open: false })}
+                    severity={notification.severity}
+                    variant="filled"
+                >
+                    {notification.message}
+                </Alert>
+            </Snackbar>
         </Box>
     );
 };

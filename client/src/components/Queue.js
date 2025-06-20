@@ -17,9 +17,10 @@ import {
     DialogActions,
     Button,
     Alert,
-    CircularProgress
+    CircularProgress,
+    Snackbar
 } from '@mui/material';
-import { PlaylistAdd as PlaylistIcon, Delete as DeleteIcon } from '@mui/icons-material';
+import { PlaylistAdd as PlaylistIcon, Delete as DeleteIcon, SkipNext as SkipNextIcon } from '@mui/icons-material';
 import { useParams } from 'react-router-dom';
 import useSocket from '../hooks/useSocket';
 
@@ -29,10 +30,12 @@ const Queue = () => {
     const [currentVideo, setCurrentVideo] = useState(null);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [videoToDelete, setVideoToDelete] = useState(null);
+    const [skipDialogOpen, setSkipDialogOpen] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
+    const [notification, setNotification] = useState({ open: false, message: '', severity: 'info' });
 
     // Use the socket hook
-    const { socket, isConnected, connectionError, joinRoom } = useSocket();
+    const { socket, isConnected, connectionError, serverError, clearServerError, joinRoom } = useSocket();
 
     // Handle socket connection and room joining
     useEffect(() => {
@@ -78,6 +81,19 @@ const Queue = () => {
         };
     }, [roomId, socket, isConnected, joinRoom]);
 
+    // Show server error notifications
+    useEffect(() => {
+        if (serverError) {
+            setNotification({
+                open: true,
+                message: `Server Error: ${serverError.message}`,
+                severity: 'error'
+            });
+            // Clear the server error after showing notification
+            clearServerError();
+        }
+    }, [serverError, clearServerError]);
+
     const handleDeleteClick = (video, index) => {
         setVideoToDelete({ video, index });
         setDeleteDialogOpen(true);
@@ -94,6 +110,19 @@ const Queue = () => {
     const handleDeleteCancel = () => {
         setDeleteDialogOpen(false);
         setVideoToDelete(null);
+    };
+
+    const handleSkipClick = () => {
+        setSkipDialogOpen(true);
+    };
+
+    const handleSkipConfirm = () => {
+        socket.emit('play-next', roomId);
+        setSkipDialogOpen(false);
+    };
+
+    const handleSkipCancel = () => {
+        setSkipDialogOpen(false);
     };
 
     return (
@@ -120,7 +149,18 @@ const Queue = () => {
                         <Typography variant="subtitle1" color="primary" gutterBottom>
                             Now Playing
                         </Typography>
-                        <ListItem>
+                        <ListItem
+                            secondaryAction={
+                                <IconButton
+                                    edge="end"
+                                    onClick={handleSkipClick}
+                                    color="warning"
+                                    disabled={!isConnected}
+                                >
+                                    <SkipNextIcon />
+                                </IconButton>
+                            }
+                        >
                             <ListItemAvatar>
                                 <Avatar
                                     variant="rounded"
@@ -231,6 +271,44 @@ const Queue = () => {
                     </Button>
                 </DialogActions>
             </Dialog>
+
+            <Dialog
+                open={skipDialogOpen}
+                onClose={handleSkipCancel}
+                aria-labelledby="skip-dialog-title"
+            >
+                <DialogTitle id="skip-dialog-title">
+                    Skip Current Song
+                </DialogTitle>
+                <DialogContent>
+                    <Typography>
+                        Are you sure you want to skip "{currentVideo?.title}" and move to the next song?
+                    </Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleSkipCancel} color="primary">
+                        Cancel
+                    </Button>
+                    <Button onClick={handleSkipConfirm} color="warning" variant="contained">
+                        Skip
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            <Snackbar
+                open={notification.open}
+                autoHideDuration={4000}
+                onClose={() => setNotification({ ...notification, open: false })}
+                anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+            >
+                <Alert
+                    onClose={() => setNotification({ ...notification, open: false })}
+                    severity={notification.severity}
+                    variant="filled"
+                >
+                    {notification.message}
+                </Alert>
+            </Snackbar>
         </Box>
     );
 };

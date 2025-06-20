@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2024-01-15 - Enhanced User Experience & Error Handling
+
+### Added
+
+- **Skip Button** for "Now Playing" section in queue with confirmation modal
+- **Comprehensive Error Message Handling** from server to client
+- Error notifications displayed to users for all server-side operations
+- Better feedback for failed operations (room joining, queue management, etc.)
+
+### Fixed
+
+- Username change functionality in Settings component when "Remember me" is unchecked
+- Proper localStorage management for username persistence
+- Cross-component communication for username updates
+- Settings modal logic for name changes
+
+### Improved
+
+- Enhanced server-side error handling for all socket events
+- Better user experience with immediate error feedback
+- More robust queue management with proper error states
+
 ## [1.2.0] - 2024-01-15 - YouTube API Compliance & Legal
 
 ### Added - YouTube API Compliance
