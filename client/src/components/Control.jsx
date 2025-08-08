@@ -419,7 +419,11 @@ const Control = () => {
                 primary={result.title}
                 secondary={
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      component="span"
+                    >
                       {result.channelTitle}
                     </Typography>
                     {result.isPlaylist && (
@@ -433,6 +437,7 @@ const Control = () => {
                     )}
                   </Box>
                 }
+                secondaryTypographyProps={{ component: "div" }}
               />
             </ListItem>
           ))}

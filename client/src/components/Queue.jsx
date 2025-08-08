@@ -187,7 +187,11 @@ const Queue = () => {
                 primary={currentVideo.title}
                 secondary={
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      component="span"
+                    >
                       Added by: {currentVideo.addedBy}
                     </Typography>
                     {currentVideo.isPlaylist && (
@@ -201,6 +205,7 @@ const Queue = () => {
                     )}
                   </Box>
                 }
+                secondaryTypographyProps={{ component: "div" }}
               />
             </ListItem>
             <Divider sx={{ my: 2 }} />
@@ -236,7 +241,11 @@ const Queue = () => {
                 primary={video.title}
                 secondary={
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      component="span"
+                    >
                       Added by: {video.addedBy}
                     </Typography>
                     {video.isPlaylist && (
@@ -250,6 +259,7 @@ const Queue = () => {
                     )}
                   </Box>
                 }
+                secondaryTypographyProps={{ component: "div" }}
               />
             </ListItem>
           ))}

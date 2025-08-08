@@ -240,12 +240,6 @@ const Room = () => {
       socket.off("video-changed", handleVideoChanged);
       socket.off("queue-updated", handleQueueUpdated);
     };
-    return () => {
-      if (positionIntervalRef.current) {
-        clearInterval(positionIntervalRef.current);
-        positionIntervalRef.current = null;
-      }
-    };
   }, [roomId, socket, isConnected, joinRoom, currentVideo]);
 
   // Show server error notifications
