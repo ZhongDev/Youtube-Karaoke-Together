@@ -109,4 +109,4 @@ This application is fully compliant with YouTube API Terms of Service:
 
 ## License
 
-MIT
+GPL-3.0-only. See `LICENSE` for full text.
