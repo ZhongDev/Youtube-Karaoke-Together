@@ -1,19 +1,17 @@
-import React, { useState } from "react";
+import React from "react";
 import {
   BrowserRouter as Router,
   Routes,
   Route,
-  Navigate,
 } from "react-router-dom";
 import { ThemeProvider, createTheme, CssBaseline } from "@mui/material";
-import { v4 as uuidv4 } from "uuid";
 import HomePage from "./components/HomePage.jsx";
 import Room from "./components/Room.jsx";
 import Control from "./components/Control.jsx";
 import PrivacyPolicy from "./components/PrivacyPolicy.jsx";
 import TermsOfService from "./components/TermsOfService.jsx";
 import Contact from "./components/Contact.jsx";
-import ErrorBoundary from "./components/ErrorBoundary";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 
 // Create dark theme
 const darkTheme = createTheme({
