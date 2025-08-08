@@ -52,10 +52,8 @@ const getInitialBackendPort = () => {
 const Room = () => {
   const { roomId } = useParams();
   const playerRef = useRef(null);
-  const positionIntervalRef = useRef(null);
   const lastVideoIdRef = useRef(null);
-  const lastTimeRef = useRef(0);
-  const lastPlayerStateRef = useRef(null);
+
   const [qrCode, setQrCode] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [backendUrl, setBackendUrl] = useState(getInitialBackendUrl());
@@ -70,6 +68,7 @@ const Room = () => {
     message: "",
     severity: "info",
   });
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
 
   // Use the new socket hook
   const {
@@ -177,20 +176,13 @@ const Room = () => {
       if (room.currentVideo && playerRef.current) {
         const incomingId = room.currentVideo.id;
         const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
-        if (alreadyLoadedSameVideo) {
-          const resumeAt = Math.max(0, Math.floor(lastTimeRef.current || 0));
-          try {
-            if (resumeAt > 0) {
-              playerRef.current.seekTo(resumeAt, true);
-            }
-            playerRef.current.playVideo();
-          } catch (_) {}
-        } else {
+        if (!alreadyLoadedSameVideo) {
           playerRef.current.loadVideoById({
             videoId: incomingId,
             startSeconds: 0,
           });
           playerRef.current.playVideo();
+          lastVideoIdRef.current = incomingId;
         }
       }
     };
@@ -204,24 +196,18 @@ const Room = () => {
           playerRef.current.pauseVideo();
           playerRef.current.clearVideo();
         }
+        lastVideoIdRef.current = null;
       } else if (playerRef.current) {
         const incomingId = video.id;
         const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
-        if (alreadyLoadedSameVideo) {
-          const resumeAt = Math.max(0, Math.floor(lastTimeRef.current || 0));
-          try {
-            if (resumeAt > 0) {
-              playerRef.current.seekTo(resumeAt, true);
-            }
-            playerRef.current.playVideo();
-          } catch (_) {}
-        } else {
+        if (!alreadyLoadedSameVideo) {
           console.log("[INFO] Loading new video in player");
           playerRef.current.loadVideoById({
             videoId: incomingId,
             startSeconds: 0,
           });
           playerRef.current.playVideo();
+          lastVideoIdRef.current = incomingId;
         }
       }
     };
@@ -258,30 +244,28 @@ const Room = () => {
   const onPlayerReady = (event) => {
     console.log("[INFO] Player ready");
     playerRef.current = event.target;
-    // start tracking playback position for resume
-    if (positionIntervalRef.current) {
-      clearInterval(positionIntervalRef.current);
-    }
-    positionIntervalRef.current = setInterval(() => {
-      try {
-        if (!playerRef.current) return;
-        const time = playerRef.current.getCurrentTime?.();
-        const state = playerRef.current.getPlayerState?.();
-        const data = playerRef.current.getVideoData?.();
-        if (typeof time === "number") {
-          lastTimeRef.current = time;
-        }
-        if (typeof state === "number") {
-          lastPlayerStateRef.current = state;
-        }
-        if (data && data.video_id) {
-          lastVideoIdRef.current = data.video_id;
-        } else if (currentVideo?.id) {
-          lastVideoIdRef.current = currentVideo.id;
-        }
-      } catch (_) {}
-    }, 1000);
+    // No resume tracking; avoid seeking to reduce stutter on reconnect
+    setIsPlayerReady(true);
   };
+
+  // Ensure we load the current room video once the player is ready
+  useEffect(() => {
+    if (!isPlayerReady || !playerRef.current) return;
+    if (!currentVideo || !currentVideo.id) return;
+
+    const incomingId = currentVideo.id;
+    const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
+    if (!alreadyLoadedSameVideo) {
+      try {
+        playerRef.current.loadVideoById({
+          videoId: incomingId,
+          startSeconds: 0,
+        });
+        playerRef.current.playVideo();
+        lastVideoIdRef.current = incomingId;
+      } catch (_) {}
+    }
+  }, [isPlayerReady, currentVideo]);
 
   const onVideoEnd = () => {
     console.log("[INFO] Video ended, requesting next video");
