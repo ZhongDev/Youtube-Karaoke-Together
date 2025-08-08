@@ -15,8 +15,8 @@ A collaborative YouTube video queuing system that allows multiple users to watch
 
 ## Prerequisites
 
-- Node.js (v14 or higher)
-- npm (v6 or higher)
+- Node.js 18+
+- npm 9+
 - YouTube Data API key
 
 ## Setup
@@ -28,7 +28,7 @@ git clone https://github.com/yourusername/youtube-karaoke-together.git
 cd youtube-karaoke-together
 ```
 
-2. Install server dependencies:
+2. Install root/server dependencies:
 
 ```bash
 npm install
@@ -41,47 +41,55 @@ cd client
 npm install
 ```
 
-4. Create a `.env` file in the root directory and add your YouTube API key:
+4. Configure environment variables at repo root:
 
 ```bash
 cp env.example .env
 ```
 
-Then edit the `.env` file and add your actual API key.
+Edit `.env` and set:
 
-5. Get your YouTube Data API key:
+```bash
+YOUTUBE_API_KEY=your_api_key
+PORT=5000
+```
+
+5. Get a YouTube Data API key:
    - Go to the [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project or select an existing one
-   - Enable the YouTube Data API v3
+   - Enable YouTube Data API v3
    - Create credentials (API key)
-   - Copy the API key to your `.env` file
+   - Paste it into `.env`
 
 ## Running the Application
 
-1. Start the server:
+1. Start the server (root):
 
 ```bash
 npm run dev
 ```
 
-2. In a new terminal, start the client:
+2. Start the client (Vite):
 
 ```bash
 cd client
-npm start
+npm run dev
 ```
 
-3. Open your browser and navigate to `http://localhost:3000`
+3. Open `http://localhost:3000`
+
+Notes:
+- The server reads configuration from `client/src/ytkt-config.json`.
+- CORS is automatically configured to the frontend origin defined in that file.
 
 ## Usage
 
 1. Visit the homepage and accept the Terms of Service
-2. Create a new room by clicking the "Create Room" button
-3. Share the QR code with mobile users to allow them to control the queue
-4. Use the mobile control panel to search for and add videos to the queue
-5. Videos will play automatically in the main room as they are queued
+2. Create a new room (a unique `roomId` will be generated)
+3. Share the displayed QR code; mobile users can open `/control/:roomId`
+4. Use the control panel to search and queue videos (YouTube API v3)
+5. The main room plays the current video; queue updates in real time
 
-## Legal Compliance
+## Legal & Compliance
 
 This application is fully compliant with YouTube API Terms of Service:
 
@@ -93,19 +101,18 @@ This application is fully compliant with YouTube API Terms of Service:
 
 ### Important Legal Pages
 
-- **Privacy Policy**: `/privacy-policy` - How we handle your data
-- **Terms of Service**: `/terms-of-service` - User agreements including YouTube ToS
-- **Contact Us**: `/contact` - Support and legal contact information
+- **Privacy Policy**: `/privacy-policy`
+- **Terms of Service**: `/terms-of-service`
+- **Contact Us**: `/contact`
 
 ## Technologies Used
 
-- React
-- Node.js
-- Express
-- Socket.IO
-- Material-UI
-- YouTube Data API
-- React YouTube Player
+- React 19 + Vite 7
+- Node.js + Express
+- Socket.IO (client/server)
+- Material UI (MUI)
+- YouTube Data API v3
+- react-youtube
 
 ## License
 
