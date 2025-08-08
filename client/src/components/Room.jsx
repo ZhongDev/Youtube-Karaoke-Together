@@ -128,7 +128,7 @@ const Room = () => {
       // Show user-friendly error message
       setQrCode(null);
     }
-    }, [backendUrl, roomId, backendHost, frontendPort]);
+  }, [backendUrl, roomId, backendHost, frontendPort]);
 
   const handleSaveSettings = () => {
     const fullBackendUrl = `${backendHost}:${backendPort}`;
