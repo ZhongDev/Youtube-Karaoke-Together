@@ -78,6 +78,7 @@ npm run dev
 3. Open `http://localhost:3000`
 
 Notes:
+
 - The server reads configuration from `client/src/ytkt-config.json`.
 - CORS is automatically configured to the frontend origin defined in that file.
 
