@@ -1,7 +1,5 @@
 import io from 'socket.io-client';
-
-// Load configuration
-const config = require('./ytkt-config.json');
+import config from './ytkt-config.json';
 
 const API_URL = `${config.backend.ssl ? 'https' : 'http'}://${config.backend.hostname}:${config.backend.port}`;
 
