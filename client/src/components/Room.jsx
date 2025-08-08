@@ -20,6 +20,8 @@ import {
 import YouTube from "react-youtube";
 import { useParams } from "react-router-dom";
 import SettingsIcon from "@mui/icons-material/Settings";
+import SignalWifiOffIcon from "@mui/icons-material/SignalWifiOff";
+import Tooltip from "@mui/material/Tooltip";
 import useSocket from "../hooks/useSocket";
 import config from "../ytkt-config.json";
 
@@ -50,6 +52,10 @@ const getInitialBackendPort = () => {
 const Room = () => {
   const { roomId } = useParams();
   const playerRef = useRef(null);
+  const positionIntervalRef = useRef(null);
+  const lastVideoIdRef = useRef(null);
+  const lastTimeRef = useRef(0);
+  const lastPlayerStateRef = useRef(null);
   const [qrCode, setQrCode] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [backendUrl, setBackendUrl] = useState(getInitialBackendUrl());
@@ -169,11 +175,23 @@ const Room = () => {
       setIsLoading(false);
 
       if (room.currentVideo && playerRef.current) {
-        playerRef.current.loadVideoById({
-          videoId: room.currentVideo.id,
-          startSeconds: 0,
-        });
-        playerRef.current.playVideo();
+        const incomingId = room.currentVideo.id;
+        const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
+        if (alreadyLoadedSameVideo) {
+          const resumeAt = Math.max(0, Math.floor(lastTimeRef.current || 0));
+          try {
+            if (resumeAt > 0) {
+              playerRef.current.seekTo(resumeAt, true);
+            }
+            playerRef.current.playVideo();
+          } catch (_) {}
+        } else {
+          playerRef.current.loadVideoById({
+            videoId: incomingId,
+            startSeconds: 0,
+          });
+          playerRef.current.playVideo();
+        }
       }
     };
 
@@ -187,12 +205,24 @@ const Room = () => {
           playerRef.current.clearVideo();
         }
       } else if (playerRef.current) {
-        console.log("[INFO] Loading new video in player");
-        playerRef.current.loadVideoById({
-          videoId: video.id,
-          startSeconds: 0,
-        });
-        playerRef.current.playVideo();
+        const incomingId = video.id;
+        const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
+        if (alreadyLoadedSameVideo) {
+          const resumeAt = Math.max(0, Math.floor(lastTimeRef.current || 0));
+          try {
+            if (resumeAt > 0) {
+              playerRef.current.seekTo(resumeAt, true);
+            }
+            playerRef.current.playVideo();
+          } catch (_) {}
+        } else {
+          console.log("[INFO] Loading new video in player");
+          playerRef.current.loadVideoById({
+            videoId: incomingId,
+            startSeconds: 0,
+          });
+          playerRef.current.playVideo();
+        }
       }
     };
 
@@ -210,7 +240,13 @@ const Room = () => {
       socket.off("video-changed", handleVideoChanged);
       socket.off("queue-updated", handleQueueUpdated);
     };
-  }, [roomId, socket, isConnected, joinRoom]);
+    return () => {
+      if (positionIntervalRef.current) {
+        clearInterval(positionIntervalRef.current);
+        positionIntervalRef.current = null;
+      }
+    };
+  }, [roomId, socket, isConnected, joinRoom, currentVideo]);
 
   // Show server error notifications
   useEffect(() => {
@@ -228,6 +264,29 @@ const Room = () => {
   const onPlayerReady = (event) => {
     console.log("[INFO] Player ready");
     playerRef.current = event.target;
+    // start tracking playback position for resume
+    if (positionIntervalRef.current) {
+      clearInterval(positionIntervalRef.current);
+    }
+    positionIntervalRef.current = setInterval(() => {
+      try {
+        if (!playerRef.current) return;
+        const time = playerRef.current.getCurrentTime?.();
+        const state = playerRef.current.getPlayerState?.();
+        const data = playerRef.current.getVideoData?.();
+        if (typeof time === "number") {
+          lastTimeRef.current = time;
+        }
+        if (typeof state === "number") {
+          lastPlayerStateRef.current = state;
+        }
+        if (data && data.video_id) {
+          lastVideoIdRef.current = data.video_id;
+        } else if (currentVideo?.id) {
+          lastVideoIdRef.current = currentVideo.id;
+        }
+      } catch (_) {}
+    }, 1000);
   };
 
   const onVideoEnd = () => {
@@ -237,6 +296,7 @@ const Room = () => {
     }
   };
 
+  // Keep YouTube player mounted at all times; display disconnect indicator
   const opts = {
     height: "100%",
     width: "100%",
@@ -249,6 +309,15 @@ const Room = () => {
       enablejsapi: 1,
     },
   };
+
+  // If socket disconnects, try to keep playback going
+  useEffect(() => {
+    if (!isConnected && playerRef.current) {
+      try {
+        playerRef.current.playVideo();
+      } catch (_) {}
+    }
+  }, [isConnected]);
 
   return (
     <Box
@@ -272,71 +341,55 @@ const Room = () => {
             bgcolor: "background.paper",
           }}
         >
-          {!isConnected ? (
-            <Box
-              sx={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                bgcolor: "black",
-              }}
-            >
-              {connectionError ? (
-                <Alert severity="error" sx={{ m: 2 }}>
-                  Connection Error: {connectionError}
-                </Alert>
-              ) : isLoading ? (
-                <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                  <CircularProgress />
-                  <Typography variant="h5">Connecting...</Typography>
-                </Box>
-              ) : (
-                <Typography variant="h5">Waiting for connection...</Typography>
-              )}
-            </Box>
-          ) : (
-            <Box
-              sx={{
-                flex: 1,
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                bgcolor: "black",
-                position: "relative",
-              }}
-            >
-              <Box
-                sx={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <YouTube
-                  videoId=""
-                  opts={opts}
-                  onReady={onPlayerReady}
-                  onEnd={onVideoEnd}
-                  onError={(error) => {
-                    console.error("[ERR] YouTube player error:", error);
-                    socket.emit("play-next", roomId);
-                  }}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                  }}
-                  iframeClassName="youtube-player"
-                  allow="autoplay"
-                />
+          <Box
+            sx={{
+              flex: 1,
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              bgcolor: "black",
+              position: "relative",
+            }}
+          >
+            {!isConnected && (
+              <Box sx={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
+                <Tooltip title="Disconnected. Attempting to reconnect...">
+                  <SignalWifiOffIcon color="error" />
+                </Tooltip>
               </Box>
+            )}
+            <Box
+              sx={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <YouTube
+                videoId=""
+                opts={opts}
+                onReady={onPlayerReady}
+                onEnd={onVideoEnd}
+                onError={(error) => {
+                  console.error("[ERR] YouTube player error:", error);
+                  if (socket) {
+                    socket.emit("play-next", roomId);
+                  }
+                }}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                }}
+                iframeClassName="youtube-player"
+                allow="autoplay"
+              />
             </Box>
-          )}
+          </Box>
         </Paper>
       </Box>
       <Box sx={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
