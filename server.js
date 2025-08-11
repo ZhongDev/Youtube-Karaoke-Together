@@ -55,6 +55,141 @@ app.use(express.json());
 // Store active rooms and their queues
 const rooms = new Map();
 
+// ----- Room helpers -----
+function createEmptyRoom() {
+    return {
+        queue: [],
+        currentVideo: null,
+        // User-configurable settings per room
+        settings: {
+            roundRobinEnabled: false,
+        },
+        // Internal state for round-robin ordering
+        roundRobin: {
+            participants: [], // ordered list of usernames
+            lastServedIdx: -1, // index into participants of who last played
+        },
+        // Live playback state snapshot reported by the room's player
+        playback: {
+            state: 'unstarted', // 'unstarted' | 'playing' | 'paused' | 'buffering' | 'ended' | 'cued'
+            positionSec: 0,
+            durationSec: null,
+            updatedAt: Date.now(),
+            videoId: null,
+        },
+        createdAt: Date.now(),
+    };
+}
+
+function ensureRoom(roomId) {
+    if (!rooms.has(roomId)) {
+        rooms.set(roomId, createEmptyRoom());
+    }
+    return rooms.get(roomId);
+}
+
+function getPublicRoomState(room) {
+    // Only expose fields needed by clients
+    return {
+        queue: room.queue,
+        currentVideo: room.currentVideo,
+        settings: room.settings,
+        playback: room.playback,
+        createdAt: room.createdAt,
+    };
+}
+
+function indexOfParticipant(room, username) {
+    return room.roundRobin.participants.findIndex((u) => u === username);
+}
+
+function upsertParticipant(room, username) {
+    if (!username) return; // ignore anonymous
+    const idx = indexOfParticipant(room, username);
+    if (idx === -1) {
+        room.roundRobin.participants.push(username);
+    }
+}
+
+// We intentionally avoid pruning participants to preserve join order priority.
+// Participants remain in the list; we will simply skip users with no items.
+function pruneParticipants(_) { /* no-op to preserve join order */ }
+
+function reorderQueueRoundRobin(room) {
+    if (!room.settings.roundRobinEnabled) return; // nothing to do
+    if (room.queue.length === 0) return;
+
+    // Build per-user queues preserving insertion order
+    const userToItems = new Map();
+    for (const item of room.queue) {
+        const key = item.addedBy || 'Unknown';
+        if (!userToItems.has(key)) userToItems.set(key, []);
+        userToItems.get(key).push(item);
+        // Ensure participant exists and preserve join order priority
+        upsertParticipant(room, key);
+    }
+
+    const participantsSnapshot = room.roundRobin.participants.slice();
+    const totalParticipants = participantsSnapshot.length;
+    if (totalParticipants <= 1) return;
+
+    const newQueue = [];
+    let remaining = room.queue.length;
+    const n = totalParticipants;
+    let cursor = room.roundRobin.lastServedIdx; // the last who sang; next search starts after this index
+
+    let safetyCounter = remaining + n + 100;
+    while (remaining > 0 && safetyCounter-- > 0) {
+        // find next participant with available items scanning in join order priority
+        let nextIdx = -1;
+        for (let step = 1; step <= n; step++) {
+            const idx = (cursor + step) % n;
+            const user = participantsSnapshot[idx];
+            const items = userToItems.get(user);
+            if (items && items.length > 0) {
+                nextIdx = idx;
+                break;
+            }
+        }
+
+        if (nextIdx === -1) break; // no more items anywhere
+
+        const nextUser = participantsSnapshot[nextIdx];
+        const list = userToItems.get(nextUser);
+        newQueue.push(list.shift());
+        remaining--;
+        cursor = nextIdx; // serve nextUser and advance pivot
+    }
+
+    // Append any leftovers in join order, then any users not in participants (should not happen)
+    for (const user of participantsSnapshot) {
+        const items = userToItems.get(user) || [];
+        while (items.length > 0) newQueue.push(items.shift());
+        userToItems.delete(user);
+    }
+    for (const [, items] of userToItems.entries()) {
+        while (items.length > 0) newQueue.push(items.shift());
+    }
+
+    room.queue = newQueue;
+}
+
+function setCurrentVideo(room, video) {
+    room.currentVideo = video;
+    // Update playback videoId immediately
+    room.playback.videoId = video ? video.id : null;
+    room.playback.positionSec = 0;
+    room.playback.updatedAt = Date.now();
+    if (video && video.addedBy) {
+        upsertParticipant(room, video.addedBy);
+        // Consider the current singer as the last served for round-robin fairness
+        const idx = indexOfParticipant(room, video.addedBy);
+        if (idx !== -1) {
+            room.roundRobin.lastServedIdx = idx;
+        }
+    }
+}
+
 // Cleanup old rooms every hour
 setInterval(() => {
     const now = Date.now();
@@ -79,11 +214,7 @@ async function generateRoomQR(roomId, origin) {
 app.post('/api/rooms', async (req, res) => {
     try {
         const roomId = uuidv4();
-        rooms.set(roomId, {
-            queue: [],
-            currentVideo: null,
-            createdAt: Date.now()
-        });
+        rooms.set(roomId, createEmptyRoom());
 
         const qrCode = await generateRoomQR(roomId, req.headers.hostname);
         console.log(`[INFO] Created new room: ${roomId}`);
@@ -100,14 +231,7 @@ app.get('/api/rooms/:roomId/qr', async (req, res) => {
     console.log('[INFO] QR Origin:', origin);
     try {
         const { roomId } = req.params;
-        // Ensure room exists
-        if (!rooms.has(roomId)) {
-            rooms.set(roomId, {
-                queue: [],
-                currentVideo: null,
-                createdAt: Date.now()
-            });
-        }
+        ensureRoom(roomId);
         console.log(`[INFO] Generating QR code for room ${roomId}`);
         const qrCode = await generateRoomQR(roomId, origin);
         res.json({ qrCode });
@@ -121,16 +245,10 @@ app.get('/api/rooms/:roomId/qr', async (req, res) => {
 app.get('/api/rooms/:roomId', (req, res) => {
     const { roomId } = req.params;
     // Ensure room exists
-    if (!rooms.has(roomId)) {
-        rooms.set(roomId, {
-            queue: [],
-            currentVideo: null,
-            createdAt: Date.now()
-        });
-    }
+    ensureRoom(roomId);
     const room = rooms.get(roomId);
     console.log(`[INFO] Retrieved room status: ${roomId}`);
-    res.json(room);
+    res.json(getPublicRoomState(room));
 });
 
 // Search YouTube videos
@@ -186,8 +304,9 @@ io.on('connection', (socket) => {
     console.log(`[INFO] New socket connection: ${socket.id}`);
     let currentRoom = null;
 
-    socket.on('join-room', (roomId) => {
-        console.log(`[INFO] Socket ${socket.id} attempting to join room: ${roomId}`);
+    socket.on('join-room', (payload) => {
+        const { roomId, username } = typeof payload === 'string' ? { roomId: payload } : (payload || {});
+        console.log(`[INFO] Socket ${socket.id} attempting to join room: ${roomId} as ${username || 'anonymous'}`);
 
         try {
             if (!roomId || typeof roomId !== 'string') {
@@ -201,19 +320,28 @@ io.on('connection', (socket) => {
             socket.join(roomId);
             console.log(`[INFO] Socket ${socket.id} joined room: ${roomId}`);
 
-            const room = rooms.get(roomId);
-            if (room) {
-                console.log(`[INFO] Sending room state to socket ${socket.id}:`, room);
-                socket.emit('room-state', room);
-            } else {
-                const error = `Room ${roomId} not found`;
-                console.log(`[ERR] ${error} for socket ${socket.id}`);
-                socket.emit('error-message', { type: 'join-room', message: error });
+            const room = ensureRoom(roomId);
+            if (username && typeof username === 'string') {
+                upsertParticipant(room, username);
             }
+            console.log(`[INFO] Sending room state to socket ${socket.id}:`, getPublicRoomState(room));
+            socket.emit('room-state', getPublicRoomState(room));
         } catch (error) {
             console.log(`[ERR] Failed to join room ${roomId} for socket ${socket.id}:`, error.message);
             socket.emit('error-message', { type: 'join-room', message: 'Failed to join room' });
         }
+    });
+
+    // Optional: allow updating username to track RR participants without rejoining
+    socket.on('identify', ({ roomId, username }) => {
+        try {
+            if (!roomId || typeof roomId !== 'string') return;
+            const room = rooms.get(roomId);
+            if (!room) return;
+            if (username && typeof username === 'string') {
+                upsertParticipant(room, username);
+            }
+        } catch (_) { }
     });
 
     socket.on('add-to-queue', ({ roomId, video }) => {
@@ -239,10 +367,12 @@ io.on('connection', (socket) => {
                 // If this is the first video and no video is currently playing, set it as current
                 if (room.queue.length === 0 && !room.currentVideo) {
                     console.log(`[INFO] Setting first video as current: ${video.title}`);
-                    room.currentVideo = video;
-                    io.to(roomId).emit('video-changed', video);
+                    setCurrentVideo(room, video);
+                    io.to(roomId).emit('video-changed', room.currentVideo);
                 } else {
                     room.queue.push(video);
+                    // Maintain RR ordering if enabled
+                    reorderQueueRoundRobin(room);
                     console.log(`[INFO] Added video "${video.title}" to queue`);
                 }
                 console.log(`[INFO] Current queue length: ${room.queue.length}`);
@@ -278,14 +408,23 @@ io.on('connection', (socket) => {
             }
 
             if (room.queue.length > 0) {
-                room.currentVideo = room.queue.shift();
+                const nextVideo = room.queue.shift();
+                setCurrentVideo(room, nextVideo);
                 console.log(`[INFO] Playing next video "${room.currentVideo.title}" in room ${roomId}`);
                 io.to(roomId).emit('video-changed', room.currentVideo);
                 io.to(roomId).emit('queue-updated', room.queue);
+
+                // Update round-robin lastServedIdx to the user who just played, if enabled
+                if (room.settings.roundRobinEnabled && room.currentVideo && room.currentVideo.addedBy) {
+                    const idx = indexOfParticipant(room, room.currentVideo.addedBy);
+                    if (idx !== -1) {
+                        room.roundRobin.lastServedIdx = idx;
+                    }
+                }
             } else {
                 console.log(`[INFO] No videos in queue for room ${roomId}`);
                 if (room.currentVideo) {
-                    room.currentVideo = null;
+                    setCurrentVideo(room, null);
                     io.to(roomId).emit('video-changed', null);
                 }
                 io.to(roomId).emit('queue-updated', []);
@@ -330,11 +469,61 @@ io.on('connection', (socket) => {
             }
 
             const removedVideo = room.queue.splice(index, 1)[0];
+            if (room.settings.roundRobinEnabled) {
+                reorderQueueRoundRobin(room);
+            }
             console.log(`[INFO] Removed video "${removedVideo.title}" from queue`);
             io.to(roomId).emit('queue-updated', room.queue);
         } catch (error) {
             console.log(`[ERR] Failed to remove video from queue for socket ${socket.id}:`, error.message);
             socket.emit('error-message', { type: 'remove-from-queue', message: 'Failed to remove video from queue' });
+        }
+    });
+
+    // Optional room leave support
+    socket.on('leave-room', (roomId) => {
+        try {
+            if (!roomId || typeof roomId !== 'string') return;
+            socket.leave(roomId);
+            if (currentRoom === roomId) currentRoom = null;
+            console.log(`[INFO] Socket ${socket.id} left room: ${roomId}`);
+        } catch (err) {
+            console.log(`[ERR] Failed to leave room ${roomId} for socket ${socket.id}:`, err.message);
+        }
+    });
+
+    // Update live playback status from Room player and broadcast to control UIs
+    socket.on('playback-state', ({ roomId, state, positionSec, durationSec, videoId }) => {
+        try {
+            if (!roomId || typeof roomId !== 'string') return;
+            const room = rooms.get(roomId);
+            if (!room) return;
+            if (state) room.playback.state = state;
+            if (typeof positionSec === 'number') room.playback.positionSec = positionSec;
+            if (typeof durationSec === 'number') room.playback.durationSec = durationSec;
+            if (typeof videoId === 'string' || videoId === null) room.playback.videoId = videoId;
+            room.playback.updatedAt = Date.now();
+            io.to(roomId).emit('playback-updated', room.playback);
+        } catch (err) {
+            console.log(`[ERR] Failed to process playback-state from ${socket.id}:`, err.message);
+        }
+    });
+
+    // Toggle room settings, currently only round-robin flag
+    socket.on('update-settings', ({ roomId, settings }) => {
+        try {
+            if (!roomId || typeof roomId !== 'string') return;
+            const room = rooms.get(roomId);
+            if (!room) return;
+            if (settings && typeof settings.roundRobinEnabled === 'boolean') {
+                room.settings.roundRobinEnabled = settings.roundRobinEnabled;
+                // Recompute order on toggle
+                reorderQueueRoundRobin(room);
+                io.to(roomId).emit('queue-updated', room.queue);
+            }
+            io.to(roomId).emit('settings-updated', room.settings);
+        } catch (err) {
+            console.log(`[ERR] Failed to update settings for room ${roomId}:`, err.message);
         }
     });
 

@@ -19,6 +19,7 @@ import {
   Alert,
   CircularProgress,
   Snackbar,
+  LinearProgress,
 } from "@mui/material";
 import {
   PlaylistAdd as PlaylistIcon,
@@ -32,6 +33,10 @@ const Queue = () => {
   const { roomId } = useParams();
   const [queue, setQueue] = useState([]);
   const [currentVideo, setCurrentVideo] = useState(null);
+  const [playback, setPlayback] = useState(null);
+  const [settingsState, setSettingsState] = useState({
+    roundRobinEnabled: false,
+  });
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [videoToDelete, setVideoToDelete] = useState(null);
   const [skipDialogOpen, setSkipDialogOpen] = useState(false);
@@ -65,13 +70,16 @@ const Queue = () => {
 
     // Join room when connected
     if (isConnected) {
-      joinRoom(roomId);
+      const username = localStorage.getItem("karaokeUsername") || "";
+      joinRoom(roomId, username);
     }
 
     const handleRoomState = (room) => {
       console.log("[INFO] Received room state:", room);
       setQueue(room.queue || []);
       setCurrentVideo(room.currentVideo);
+      setPlayback(room.playback || null);
+      setSettingsState(room.settings || { roundRobinEnabled: false });
       setIsLoading(false);
     };
 
@@ -87,12 +95,18 @@ const Queue = () => {
 
     socket.on("room-state", handleRoomState);
     socket.on("queue-updated", handleQueueUpdated);
+    socket.on("settings-updated", (settings) =>
+      setSettingsState(settings || { roundRobinEnabled: false })
+    );
     socket.on("video-changed", handleVideoChanged);
+    socket.on("playback-updated", (pb) => setPlayback(pb));
 
     return () => {
       socket.off("room-state", handleRoomState);
       socket.off("queue-updated", handleQueueUpdated);
       socket.off("video-changed", handleVideoChanged);
+      socket.off("settings-updated");
+      socket.off("playback-updated");
     };
   }, [roomId, socket, isConnected, joinRoom]);
 
@@ -138,6 +152,17 @@ const Queue = () => {
 
   const handleSkipCancel = () => {
     setSkipDialogOpen(false);
+  };
+
+  const formatTime = (sec) => {
+    if (sec == null || Number.isNaN(sec)) return "--:--";
+    const s = Math.floor(sec % 60)
+      .toString()
+      .padStart(2, "0");
+    const m = Math.floor(sec / 60)
+      .toString()
+      .padStart(2, "0");
+    return `${m}:${s}`;
   };
 
   return (
@@ -208,12 +233,43 @@ const Queue = () => {
                 secondaryTypographyProps={{ component: "div" }}
               />
             </ListItem>
+            <Box sx={{ px: 2, pb: 1 }}>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <Typography variant="caption">
+                  {formatTime(playback?.positionSec)}
+                </Typography>
+                <LinearProgress
+                  variant={
+                    playback?.durationSec ? "determinate" : "indeterminate"
+                  }
+                  value={
+                    playback?.durationSec
+                      ? Math.max(
+                          0,
+                          Math.min(
+                            100,
+                            (100 * (playback?.positionSec || 0)) /
+                              (playback?.durationSec || 1)
+                          )
+                        )
+                      : 0
+                  }
+                  sx={{ flex: 1 }}
+                />
+                <Typography variant="caption">
+                  {formatTime(playback?.durationSec)}
+                </Typography>
+              </Box>
+              <Typography variant="caption" color="text.secondary">
+                State: {playback?.state || "unknown"}
+              </Typography>
+            </Box>
             <Divider sx={{ my: 2 }} />
           </>
         )}
 
         <Typography variant="subtitle1" color="primary" gutterBottom>
-          Up Next
+          Up Next {settingsState.roundRobinEnabled ? "(Round-robin)" : ""}
         </Typography>
         <List>
           {queue.map((video, index) => (

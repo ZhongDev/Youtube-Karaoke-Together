@@ -62,6 +62,7 @@ const Room = () => {
   const [frontendPort, setFrontendPort] = useState(getInitialFrontendPort());
   const [currentVideo, setCurrentVideo] = useState(null);
   const [queue, setQueue] = useState([]);
+  const [playback, setPlayback] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [notification, setNotification] = useState({
     open: false,
@@ -171,6 +172,7 @@ const Room = () => {
       console.log("[INFO] Received room state:", room);
       setCurrentVideo(room.currentVideo);
       setQueue(room.queue || []);
+      setPlayback(room.playback || null);
       setIsLoading(false);
 
       if (room.currentVideo && playerRef.current) {
@@ -220,11 +222,13 @@ const Room = () => {
     socket.on("room-state", handleRoomState);
     socket.on("video-changed", handleVideoChanged);
     socket.on("queue-updated", handleQueueUpdated);
+    socket.on("playback-updated", (pb) => setPlayback(pb));
 
     return () => {
       socket.off("room-state", handleRoomState);
       socket.off("video-changed", handleVideoChanged);
       socket.off("queue-updated", handleQueueUpdated);
+      socket.off("playback-updated");
     };
   }, [roomId, socket, isConnected, joinRoom, currentVideo]);
 
@@ -273,6 +277,35 @@ const Room = () => {
       socket.emit("play-next", roomId);
     }
   };
+
+  // Periodically publish playback time to server while video is playing
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!socket || !playerRef.current) return;
+      try {
+        const state = playerRef.current.getPlayerState();
+        // 1=playing, 2=paused, 3=buffering, 0=ended, -1=unstarted, 5=cued
+        const stateMap = {
+          [-1]: "unstarted",
+          0: "ended",
+          1: "playing",
+          2: "paused",
+          3: "buffering",
+          5: "cued",
+        };
+        const positionSec = playerRef.current.getCurrentTime?.() || 0;
+        const durationSec = playerRef.current.getDuration?.() || null;
+        socket.emit("playback-state", {
+          roomId,
+          state: stateMap[state] || "unknown",
+          positionSec,
+          durationSec,
+          videoId: currentVideo?.id || null,
+        });
+      } catch (_) {}
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [socket, roomId, currentVideo]);
 
   // Keep YouTube player mounted at all times; display disconnect indicator
   const opts = {

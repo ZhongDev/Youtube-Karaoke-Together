@@ -21,6 +21,8 @@ import {
   DialogActions,
   FormControlLabel,
   Checkbox,
+  Switch,
+  LinearProgress,
   Alert,
   Snackbar,
 } from "@mui/material";
@@ -77,6 +79,11 @@ const Control = () => {
   });
   const [currentTab, setCurrentTab] = useState(0);
   const [hasSearched, setHasSearched] = useState(false);
+  const [settingsState, setSettingsState] = useState({
+    roundRobinEnabled: false,
+  });
+  const [playback, setPlayback] = useState(null);
+  const [currentVideo, setCurrentVideo] = useState(null);
   const loadingRef = useRef(false);
   const observer = useRef();
 
@@ -187,7 +194,7 @@ const Control = () => {
     }
   }, []);
 
-  // Join room when connected
+  // Join room when connected (send username for RR tracking)
   useEffect(() => {
     if (!roomId) {
       console.error("[ERR] No roomId provided");
@@ -197,9 +204,35 @@ const Control = () => {
     console.log("[INFO] Control component mounted, roomId:", roomId);
 
     if (isConnected) {
-      joinRoom(roomId);
+      joinRoom(roomId, username);
     }
-  }, [roomId, isConnected, joinRoom]);
+  }, [roomId, isConnected, joinRoom, username]);
+
+  // Listen for room state, settings and playback updates
+  useEffect(() => {
+    if (!socket) return;
+    const handleRoomState = (room) => {
+      setSettingsState(room.settings || { roundRobinEnabled: false });
+      setPlayback(room.playback || null);
+      setCurrentVideo(room.currentVideo || null);
+    };
+    const handleSettingsUpdated = (newSettings) =>
+      setSettingsState(newSettings || { roundRobinEnabled: false });
+    const handlePlaybackUpdated = (pb) => setPlayback(pb);
+    const handleVideoChanged = (video) => setCurrentVideo(video);
+
+    socket.on("room-state", handleRoomState);
+    socket.on("settings-updated", handleSettingsUpdated);
+    socket.on("playback-updated", handlePlaybackUpdated);
+    socket.on("video-changed", handleVideoChanged);
+
+    return () => {
+      socket.off("room-state", handleRoomState);
+      socket.off("settings-updated", handleSettingsUpdated);
+      socket.off("playback-updated", handlePlaybackUpdated);
+      socket.off("video-changed", handleVideoChanged);
+    };
+  }, [socket, roomId]);
 
   // Show connection error notifications
   useEffect(() => {
@@ -344,6 +377,28 @@ const Control = () => {
     socket.emit("play-next", roomId);
   };
 
+  const toggleRoundRobin = (event) => {
+    const enabled = !!event.target.checked;
+    setSettingsState((prev) => ({ ...prev, roundRobinEnabled: enabled }));
+    if (socket) {
+      socket.emit("update-settings", {
+        roomId,
+        settings: { roundRobinEnabled: enabled },
+      });
+    }
+  };
+
+  const formatTime = (sec) => {
+    if (sec == null || Number.isNaN(sec)) return "--:--";
+    const s = Math.floor(sec % 60)
+      .toString()
+      .padStart(2, "0");
+    const m = Math.floor(sec / 60)
+      .toString()
+      .padStart(2, "0");
+    return `${m}:${s}`;
+  };
+
   const renderSearchTab = () => (
     <Box sx={{ maxWidth: 600, mx: "auto", width: "100%", p: 2 }}>
       <Paper elevation={3} sx={{ p: 2, mb: 2 }}>
@@ -457,6 +512,63 @@ const Control = () => {
         <Typography variant="h5" gutterBottom>
           Controls {!isConnected && "(Disconnected)"}
         </Typography>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            mb: 2,
+          }}
+        >
+          <FormControlLabel
+            control={
+              <Switch
+                checked={!!settingsState.roundRobinEnabled}
+                onChange={toggleRoundRobin}
+              />
+            }
+            label="Round-robin queue"
+          />
+        </Box>
+        {currentVideo && (
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle1" gutterBottom>
+              Now Playing
+            </Typography>
+            <Typography variant="body1" gutterBottom>
+              {currentVideo.title}
+            </Typography>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+              <Typography variant="caption">
+                {formatTime(playback?.positionSec)}
+              </Typography>
+              <LinearProgress
+                variant={
+                  playback?.durationSec ? "determinate" : "indeterminate"
+                }
+                value={
+                  playback?.durationSec
+                    ? Math.max(
+                        0,
+                        Math.min(
+                          100,
+                          (100 * (playback?.positionSec || 0)) /
+                            (playback?.durationSec || 1)
+                        )
+                      )
+                    : 0
+                }
+                sx={{ flex: 1 }}
+              />
+              <Typography variant="caption">
+                {formatTime(playback?.durationSec)}
+              </Typography>
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              State: {playback?.state || "unknown"}
+            </Typography>
+          </Box>
+        )}
         <Box sx={{ display: "flex", justifyContent: "center", gap: 2 }}>
           <Button
             variant="contained"

@@ -31,6 +31,8 @@ const useSocket = (backendUrl = null) => {
         }
 
         const socket = socketInstance;
+        // Expose for one-off emits from non-hook modules (e.g., Settings)
+        try { window.ytktSocket = socket; } catch (_) { }
 
         const handleConnect = () => {
             console.log('[INFO] Socket connected');
@@ -83,10 +85,10 @@ const useSocket = (backendUrl = null) => {
         };
     }, [backendUrl]);
 
-    const joinRoom = (roomId) => {
+    const joinRoom = (roomId, username) => {
         if (socketInstance && socketInstance.connected && roomId && !hasJoinedRoomRef.current.has(roomId)) {
-            console.log('[INFO] Joining room:', roomId);
-            socketInstance.emit('join-room', roomId);
+            console.log('[INFO] Joining room:', roomId, 'as', username || 'anonymous');
+            socketInstance.emit('join-room', { roomId, username });
             hasJoinedRoomRef.current.add(roomId);
         }
     };

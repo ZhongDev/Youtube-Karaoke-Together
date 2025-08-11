@@ -54,6 +54,16 @@ const Settings = () => {
           oldValue: localStorage.getItem("karaokeUsername"),
         })
       );
+
+      // Notify server of identity for RR participation if in a room context
+      try {
+        const roomId =
+          window.location.pathname.split("/control/")[1] ||
+          window.location.pathname.split("/room/")[1];
+        if (roomId && window.ytktSocket && window.ytktSocket.connected) {
+          window.ytktSocket.emit("identify", { roomId, username });
+        }
+      } catch (_) {}
     }
   };
 
