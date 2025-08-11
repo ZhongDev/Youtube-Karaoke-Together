@@ -82,7 +82,8 @@ const HomePage = () => {
     {
       icon: <QueueMusic sx={{ fontSize: 48, color: "primary.main" }} />,
       title: "Queue Management",
-      description: "Collaboratively build and manage your video playlist",
+      description:
+        "Collaboratively build and manage your video playlist, with optional Round-Robin Queuing",
     },
     {
       icon: <Search sx={{ fontSize: 48, color: "primary.main" }} />,

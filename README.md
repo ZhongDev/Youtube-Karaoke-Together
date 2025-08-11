@@ -12,6 +12,7 @@ A collaborative YouTube video queuing system that allows multiple users to watch
 - **YouTube API Compliant** - Full legal compliance with YouTube ToS
 - **Privacy-First Design** - Comprehensive privacy protection
 - **Terms of Service Protection** - Clear user agreements
+- **Round-Robin Queueing (Optional)** - Fair turn rotation between participants, toggleable from the Controls tab
 
 ## Prerequisites
 
