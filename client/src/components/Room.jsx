@@ -61,6 +61,7 @@ const Room = () => {
   const [backendPort, setBackendPort] = useState(getInitialBackendPort());
   const [frontendPort, setFrontendPort] = useState(getInitialFrontendPort());
   const [currentVideo, setCurrentVideo] = useState(null);
+  const [initalStartSeconds, setInitalStartSeconds] = useState(null);
   const [queue, setQueue] = useState([]);
   const [playback, setPlayback] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -80,6 +81,24 @@ const Room = () => {
     clearServerError,
     joinRoom,
   } = useSocket(backendUrl);
+
+  // Compute resume position based on playback snapshot
+  const computeStartSeconds = useCallback(
+    (videoId) => {
+      if (!playback) return 0;
+      if (playback.videoId && playback.videoId !== videoId) return 0;
+      const pos =
+        typeof playback.positionSec === "number" ? playback.positionSec : 0;
+      const dur =
+        typeof playback.durationSec === "number" ? playback.durationSec : null;
+      const clamped =
+        dur != null
+          ? Math.min(Math.max(0, pos), Math.max(0, dur - 0.75))
+          : Math.max(0, pos);
+      return clamped;
+    },
+    [playback]
+  );
 
   // Save backend URL to localStorage when it changes
   useEffect(() => {
@@ -179,9 +198,10 @@ const Room = () => {
         const incomingId = room.currentVideo.id;
         const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
         if (!alreadyLoadedSameVideo) {
+          const startSeconds = computeStartSeconds(incomingId);
           playerRef.current.loadVideoById({
             videoId: incomingId,
-            startSeconds: 0,
+            startSeconds,
           });
           playerRef.current.playVideo();
           lastVideoIdRef.current = incomingId;
@@ -204,9 +224,10 @@ const Room = () => {
         const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
         if (!alreadyLoadedSameVideo) {
           console.log("[INFO] Loading new video in player");
+          const startSeconds = computeStartSeconds(incomingId);
           playerRef.current.loadVideoById({
             videoId: incomingId,
-            startSeconds: 0,
+            startSeconds,
           });
           playerRef.current.playVideo();
           lastVideoIdRef.current = incomingId;
@@ -248,11 +269,41 @@ const Room = () => {
   const onPlayerReady = (event) => {
     console.log("[INFO] Player ready");
     playerRef.current = event.target;
-    // No resume tracking; avoid seeking to reduce stutter on reconnect
     setIsPlayerReady(true);
+    // If there is a currentVideo known from server state, ensure it is loaded immediately
+    try {
+      const incomingId = currentVideo?.id;
+      const startSeconds = computeStartSeconds(incomingId);
+      if (incomingId) {
+        const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
+        if (!alreadyLoadedSameVideo) {
+          playerRef.current.loadVideoById({
+            videoId: incomingId,
+            startSeconds: startSeconds,
+          });
+          setInitalStartSeconds(startSeconds);
+          console.log(
+            "[INFO] Loaded video:",
+            incomingId,
+            "with startSeconds:",
+            startSeconds
+          );
+          playerRef.current.playVideo();
+          lastVideoIdRef.current = incomingId;
+        } else {
+          playerRef.current.seekTo(Math.round(initalStartSeconds ?? 0), true);
+          console.log(
+            "[INFO] Seeking to:",
+            initalStartSeconds ?? 0,
+            "for video:",
+            incomingId
+          );
+        }
+      }
+    } catch (_) {}
   };
 
-  // Ensure we load the current room video once the player is ready
+  // Ensure we load the current room video once the player is ready or currentVideo changes
   useEffect(() => {
     if (!isPlayerReady || !playerRef.current) return;
     if (!currentVideo || !currentVideo.id) return;
@@ -261,17 +312,17 @@ const Room = () => {
     const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
     if (!alreadyLoadedSameVideo) {
       try {
-        playerRef.current.loadVideoById({
-          videoId: incomingId,
-          startSeconds: 0,
-        });
+        const startSeconds = computeStartSeconds(incomingId);
+        playerRef.current.loadVideoById({ videoId: incomingId, startSeconds });
         playerRef.current.playVideo();
         lastVideoIdRef.current = incomingId;
       } catch (_) {}
     }
-  }, [isPlayerReady, currentVideo]);
+  }, [isPlayerReady, currentVideo, playerRef, computeStartSeconds]);
 
   const onVideoEnd = () => {
+    // Only proceed if we actually loaded the currentVideo into the player
+    if (!currentVideo || lastVideoIdRef.current !== currentVideo.id) return;
     console.log("[INFO] Video ended, requesting next video");
     if (socket) {
       socket.emit("play-next", roomId);
@@ -382,12 +433,18 @@ const Room = () => {
               }}
             >
               <YouTube
-                videoId=""
+                videoId={currentVideo?.id || undefined}
                 opts={opts}
                 onReady={onPlayerReady}
                 onEnd={onVideoEnd}
                 onError={(error) => {
                   console.error("[ERR] YouTube player error:", error);
+                  // Avoid skipping ahead before first load completes
+                  if (
+                    !currentVideo ||
+                    lastVideoIdRef.current !== currentVideo.id
+                  )
+                    return;
                   if (socket) {
                     socket.emit("play-next", roomId);
                   }
