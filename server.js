@@ -539,7 +539,7 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = config.backend.port;
+const PORT = Number(process.env.PORT) || config.backend.port;
 server.listen(PORT, () => {
     console.log(`[INFO] Server running on port ${PORT}`);
-}); 
+});
