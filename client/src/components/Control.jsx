@@ -401,20 +401,38 @@ const Control = () => {
 
   const renderSearchTab = () => (
     <Box sx={{ maxWidth: 600, mx: "auto", width: "100%", p: 2 }}>
-      <Paper elevation={3} sx={{ p: 2, mb: 2 }}>
-        <Typography variant="h5" gutterBottom>
+      <Paper
+        elevation={0}
+        sx={{
+          p: 3,
+          mb: 2,
+          background: "rgba(18, 18, 26, 0.7)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(148, 163, 184, 0.1)",
+          borderRadius: 3,
+        }}
+      >
+        <Typography variant="h5" gutterBottom sx={{ fontWeight: 600 }}>
           Search
         </Typography>
         {!hasSearched && (
-          <Box sx={{ mb: 2, p: 1, bgcolor: "info.light", borderRadius: 1 }}>
-            <Typography variant="caption" sx={{ color: "info.contrastText" }}>
+          <Box
+            sx={{
+              mb: 2,
+              p: 2,
+              background: "rgba(59, 130, 246, 0.1)",
+              border: "1px solid rgba(59, 130, 246, 0.2)",
+              borderRadius: 2,
+            }}
+          >
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
               This service uses YouTube API Services. By using this app, you
               agree to the{" "}
               <a
                 href="https://www.youtube.com/t/terms"
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: "inherit", textDecoration: "underline" }}
+                style={{ color: "#60A5FA", textDecoration: "underline" }}
               >
                 YouTube Terms of Service
               </a>
@@ -436,58 +454,134 @@ const Control = () => {
             variant="contained"
             onClick={handleSearch}
             disabled={!isConnected || isSearching || !searchQuery.trim()}
+            sx={{
+              background: "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
+              minWidth: 100,
+              "&:hover": {
+                background: "linear-gradient(135deg, #A78BFA 0%, #8B5CF6 100%)",
+              },
+              "&:disabled": {
+                background: "rgba(148, 163, 184, 0.2)",
+              },
+            }}
           >
-            {isSearching ? "Searching..." : "Search"}
+            {isSearching ? "..." : "Search"}
           </Button>
         </Box>
       </Paper>
 
-      <Paper elevation={3} sx={{ p: 2 }}>
-        <Typography variant="h6" gutterBottom>
+      <Paper
+        elevation={0}
+        sx={{
+          p: 2,
+          background: "rgba(18, 18, 26, 0.7)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(148, 163, 184, 0.1)",
+          borderRadius: 3,
+        }}
+      >
+        <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
           Search Results{" "}
-          {searchResults.length > 0 && `(${searchResults.length})`}
+          {searchResults.length > 0 && (
+            <Chip
+              label={searchResults.length}
+              size="small"
+              sx={{
+                ml: 1,
+                background: "rgba(139, 92, 246, 0.2)",
+                color: "#A78BFA",
+              }}
+            />
+          )}
         </Typography>
         <List>
           {searchResults.map((result, index) => (
             <ListItem
               key={result.id}
-              divider
               ref={index === searchResults.length - 1 ? lastResultRef : null}
               secondaryAction={
                 <IconButton
                   edge="end"
                   onClick={() => addToQueue(result)}
                   disabled={!isConnected}
+                  sx={{
+                    color: "#10B981",
+                    background: "rgba(16, 185, 129, 0.1)",
+                    "&:hover": {
+                      background: "rgba(16, 185, 129, 0.2)",
+                    },
+                    "&:disabled": {
+                      color: "rgba(148, 163, 184, 0.3)",
+                    },
+                  }}
                 >
                   <AddIcon />
                 </IconButton>
               }
+              sx={{
+                borderRadius: 2,
+                mb: 1,
+                pl: 2,
+                pr: 2,
+                background: "rgba(139, 92, 246, 0.05)",
+                border: "1px solid rgba(148, 163, 184, 0.05)",
+                transition: "all 0.2s",
+                "&:hover": {
+                  background: "rgba(139, 92, 246, 0.1)",
+                  border: "1px solid rgba(139, 92, 246, 0.2)",
+                },
+              }}
             >
-              <ListItemAvatar>
+              <ListItemAvatar sx={{ minWidth: 96, mr: 1 }}>
                 <Avatar
                   variant="rounded"
                   src={`https://img.youtube.com/vi/${result.id}/mqdefault.jpg`}
                   alt={result.title}
+                  sx={{
+                    width: 80,
+                    height: 50,
+                    borderRadius: 1,
+                  }}
                 />
               </ListItemAvatar>
               <ListItemText
-                primary={result.title}
+                sx={{ my: 0 }}
+                primary={
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 500,
+                      color: "text.primary",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                    }}
+                  >
+                    {result.title}
+                  </Typography>
+                }
                 secondary={
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
                     <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      component="span"
+                      variant="caption"
+                      sx={{ color: "text.secondary" }}
                     >
                       {result.channelTitle}
                     </Typography>
                     {result.isPlaylist && (
                       <Chip
                         size="small"
-                        icon={<PlaylistIcon />}
+                        icon={<PlaylistIcon sx={{ fontSize: 14 }} />}
                         label="Playlist"
-                        color="primary"
-                        variant="outlined"
+                        sx={{
+                          height: 20,
+                          fontSize: "0.7rem",
+                          background: "rgba(139, 92, 246, 0.2)",
+                          color: "#A78BFA",
+                          border: "none",
+                        }}
                       />
                     )}
                   </Box>
@@ -498,7 +592,7 @@ const Control = () => {
           ))}
           {isLoadingMore && (
             <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-              <CircularProgress size={24} />
+              <CircularProgress size={24} sx={{ color: "#8B5CF6" }} />
             </Box>
           )}
         </List>
@@ -508,16 +602,40 @@ const Control = () => {
 
   const renderControlsTab = () => (
     <Box sx={{ maxWidth: 600, mx: "auto", width: "100%", p: 2 }}>
-      <Paper elevation={3} sx={{ p: 2 }}>
-        <Typography variant="h5" gutterBottom>
-          Controls {!isConnected && "(Disconnected)"}
+      <Paper
+        elevation={0}
+        sx={{
+          p: 3,
+          background: "rgba(18, 18, 26, 0.7)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(148, 163, 184, 0.1)",
+          borderRadius: 3,
+        }}
+      >
+        <Typography variant="h5" gutterBottom sx={{ fontWeight: 600 }}>
+          Controls{" "}
+          {!isConnected && (
+            <Chip
+              label="Disconnected"
+              size="small"
+              sx={{
+                ml: 1,
+                background: "rgba(239, 68, 68, 0.2)",
+                color: "#EF4444",
+              }}
+            />
+          )}
         </Typography>
         <Box
           sx={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            mb: 2,
+            mb: 3,
+            p: 2,
+            background: "rgba(139, 92, 246, 0.05)",
+            borderRadius: 2,
+            border: "1px solid rgba(148, 163, 184, 0.05)",
           }}
         >
           <FormControlLabel
@@ -525,21 +643,40 @@ const Control = () => {
               <Switch
                 checked={!!settingsState.roundRobinEnabled}
                 onChange={toggleRoundRobin}
+                sx={{
+                  "& .MuiSwitch-switchBase.Mui-checked": {
+                    color: "#8B5CF6",
+                  },
+                  "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
+                    backgroundColor: "#8B5CF6",
+                  },
+                }}
               />
             }
             label="Round-robin queue"
           />
         </Box>
         {currentVideo && (
-          <Box sx={{ mb: 2 }}>
-            <Typography variant="subtitle1" gutterBottom>
+          <Box
+            sx={{
+              mb: 3,
+              p: 3,
+              background: "rgba(139, 92, 246, 0.1)",
+              borderRadius: 2,
+              border: "1px solid rgba(139, 92, 246, 0.2)",
+            }}
+          >
+            <Typography
+              variant="subtitle2"
+              sx={{ color: "#8B5CF6", fontWeight: 600, mb: 1 }}
+            >
               Now Playing
             </Typography>
-            <Typography variant="body1" gutterBottom>
+            <Typography variant="body1" sx={{ fontWeight: 500, mb: 2 }}>
               {currentVideo.title}
             </Typography>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
-              <Typography variant="caption">
+              <Typography variant="caption" sx={{ color: "text.secondary", minWidth: 40 }}>
                 {formatTime(playback?.positionSec)}
               </Typography>
               <LinearProgress
@@ -560,11 +697,11 @@ const Control = () => {
                 }
                 sx={{ flex: 1 }}
               />
-              <Typography variant="caption">
+              <Typography variant="caption" sx={{ color: "text.secondary", minWidth: 40, textAlign: "right" }}>
                 {formatTime(playback?.durationSec)}
               </Typography>
             </Box>
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
               State: {playback?.state || "unknown"}
             </Typography>
           </Box>
@@ -572,10 +709,20 @@ const Control = () => {
         <Box sx={{ display: "flex", justifyContent: "center", gap: 2 }}>
           <Button
             variant="contained"
-            color="primary"
             startIcon={<SkipIcon />}
             onClick={handleSkip}
             disabled={!isConnected}
+            sx={{
+              background: "linear-gradient(135deg, #EC4899 0%, #DB2777 100%)",
+              px: 4,
+              py: 1.5,
+              "&:hover": {
+                background: "linear-gradient(135deg, #F472B6 0%, #EC4899 100%)",
+              },
+              "&:disabled": {
+                background: "rgba(148, 163, 184, 0.2)",
+              },
+            }}
           >
             Skip Current Song
           </Button>
@@ -590,19 +737,29 @@ const Control = () => {
         display: "flex",
         flexDirection: "column",
         minHeight: "100vh",
-        pb: 7,
+        pb: 8,
+        background: "linear-gradient(180deg, #0A0A0F 0%, #12121A 100%)",
       }}
     >
+      {/* Name Entry Dialog */}
       <Dialog
         open={showNameModal}
         onClose={() => {}}
         disableEscapeKeyDown
-        disableBackdropClick
         maxWidth="xs"
         fullWidth
+        PaperProps={{
+          sx: {
+            background: "linear-gradient(180deg, #12121A 0%, #0A0A0F 100%)",
+            border: "1px solid rgba(148, 163, 184, 0.15)",
+            borderRadius: 3,
+          },
+        }}
       >
-        <DialogTitle sx={{ textAlign: "center" }}>Enter Your Name</DialogTitle>
-        <DialogContent>
+        <DialogTitle sx={{ textAlign: "center", fontWeight: 600, pt: 4 }}>
+          Enter Your Name
+        </DialogTitle>
+        <DialogContent sx={{ px: 3 }}>
           <TextField
             autoFocus
             margin="dense"
@@ -617,18 +774,31 @@ const Control = () => {
               <Checkbox
                 checked={rememberMe}
                 onChange={(e) => setRememberMe(e.target.checked)}
-                color="primary"
+                sx={{
+                  color: "text.secondary",
+                  "&.Mui-checked": { color: "#8B5CF6" },
+                }}
               />
             }
             label="Remember me"
+            sx={{ mt: 1, color: "text.secondary" }}
           />
         </DialogContent>
-        <DialogActions sx={{ justifyContent: "center", pb: 2 }}>
+        <DialogActions sx={{ justifyContent: "center", pb: 4 }}>
           <Button
             onClick={handleNameSubmit}
             variant="contained"
             disabled={!username.trim()}
-            sx={{ minWidth: 120 }}
+            sx={{
+              minWidth: 150,
+              background: "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
+              "&:hover": {
+                background: "linear-gradient(135deg, #A78BFA 0%, #8B5CF6 100%)",
+              },
+              "&:disabled": {
+                background: "rgba(148, 163, 184, 0.2)",
+              },
+            }}
           >
             Continue
           </Button>
@@ -650,14 +820,52 @@ const Control = () => {
           bottom: 0,
           left: 0,
           right: 0,
-          borderTop: 1,
-          borderColor: "divider",
+          background: "rgba(18, 18, 26, 0.95)",
+          backdropFilter: "blur(20px)",
+          borderTop: "1px solid rgba(148, 163, 184, 0.1)",
+          height: 64,
         }}
       >
-        <BottomNavigationAction label="Search" icon={<SearchIcon />} />
-        <BottomNavigationAction label="Queue" icon={<QueueIcon />} />
-        <BottomNavigationAction label="Controls" icon={<SkipIcon />} />
-        <BottomNavigationAction label="Settings" icon={<SettingsIcon />} />
+        <BottomNavigationAction
+          label="Search"
+          icon={<SearchIcon />}
+          sx={{
+            color: "text.secondary",
+            "&.Mui-selected": {
+              color: "#8B5CF6",
+            },
+          }}
+        />
+        <BottomNavigationAction
+          label="Queue"
+          icon={<QueueIcon />}
+          sx={{
+            color: "text.secondary",
+            "&.Mui-selected": {
+              color: "#8B5CF6",
+            },
+          }}
+        />
+        <BottomNavigationAction
+          label="Controls"
+          icon={<SkipIcon />}
+          sx={{
+            color: "text.secondary",
+            "&.Mui-selected": {
+              color: "#8B5CF6",
+            },
+          }}
+        />
+        <BottomNavigationAction
+          label="Settings"
+          icon={<SettingsIcon />}
+          sx={{
+            color: "text.secondary",
+            "&.Mui-selected": {
+              color: "#8B5CF6",
+            },
+          }}
+        />
       </BottomNavigation>
 
       <Snackbar
@@ -669,7 +877,21 @@ const Control = () => {
         <Alert
           onClose={() => setNotification({ ...notification, open: false })}
           severity={notification.severity}
-          sx={{ width: "100%" }}
+          sx={{
+            width: "100%",
+            background:
+              notification.severity === "error"
+                ? "linear-gradient(135deg, #EF4444 0%, #DC2626 100%)"
+                : notification.severity === "success"
+                ? "linear-gradient(135deg, #10B981 0%, #059669 100%)"
+                : notification.severity === "warning"
+                ? "linear-gradient(135deg, #F59E0B 0%, #D97706 100%)"
+                : "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
+            color: "white",
+            "& .MuiAlert-icon": {
+              color: "white",
+            },
+          }}
         >
           {notification.message}
         </Alert>

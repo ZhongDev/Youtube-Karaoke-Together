@@ -25,6 +25,7 @@ import {
   PlaylistAdd as PlaylistIcon,
   Delete as DeleteIcon,
   SkipNext as SkipNextIcon,
+  QueueMusic as QueueMusicIcon,
 } from "@mui/icons-material";
 import { useParams } from "react-router-dom";
 import useSocket from "../hooks/useSocket";
@@ -167,150 +168,265 @@ const Queue = () => {
 
   return (
     <Box sx={{ p: 2, maxWidth: 800, mx: "auto" }}>
-      <Paper elevation={3} sx={{ p: 2 }}>
-        <Typography variant="h5" gutterBottom>
-          Current Queue {!isConnected && "(Disconnected)"}
-        </Typography>
+      <Paper
+        elevation={0}
+        sx={{
+          p: 3,
+          background: "rgba(18, 18, 26, 0.7)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(148, 163, 184, 0.1)",
+          borderRadius: 3,
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 3 }}>
+          <QueueMusicIcon sx={{ color: "#8B5CF6" }} />
+          <Typography variant="h5" sx={{ fontWeight: 600 }}>
+            Current Queue
+          </Typography>
+          {!isConnected && (
+            <Chip
+              label="Disconnected"
+              size="small"
+              sx={{
+                ml: "auto",
+                background: "rgba(239, 68, 68, 0.2)",
+                color: "#EF4444",
+              }}
+            />
+          )}
+        </Box>
 
         {connectionError && (
-          <Alert severity="error" sx={{ mb: 2 }}>
+          <Alert
+            severity="error"
+            sx={{
+              mb: 2,
+              background: "rgba(239, 68, 68, 0.1)",
+              border: "1px solid rgba(239, 68, 68, 0.2)",
+            }}
+          >
             Connection Error: {connectionError}
           </Alert>
         )}
 
         {isLoading && isConnected && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-            <CircularProgress />
+            <CircularProgress sx={{ color: "#8B5CF6" }} />
           </Box>
         )}
 
         {currentVideo && (
           <>
-            <Typography variant="subtitle1" color="primary" gutterBottom>
-              Now Playing
-            </Typography>
-            <ListItem
-              secondaryAction={
-                <IconButton
-                  edge="end"
-                  onClick={handleSkipClick}
-                  color="warning"
-                  disabled={!isConnected}
-                >
-                  <SkipNextIcon />
-                </IconButton>
-              }
+            <Box
+              sx={{
+                p: 3,
+                mb: 3,
+                background: "rgba(139, 92, 246, 0.1)",
+                borderRadius: 2,
+                border: "1px solid rgba(139, 92, 246, 0.2)",
+              }}
             >
-              <ListItemAvatar>
-                <Avatar
-                  variant="rounded"
-                  src={`https://img.youtube.com/vi/${currentVideo.id}/mqdefault.jpg`}
-                  alt={currentVideo.title}
-                />
-              </ListItemAvatar>
-              <ListItemText
-                primary={currentVideo.title}
-                secondary={
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      component="span"
-                    >
-                      Added by: {currentVideo.addedBy}
-                    </Typography>
-                    {currentVideo.isPlaylist && (
-                      <Chip
-                        size="small"
-                        icon={<PlaylistIcon />}
-                        label="Playlist"
-                        color="primary"
-                        variant="outlined"
-                      />
-                    )}
-                  </Box>
+              <Typography
+                variant="subtitle2"
+                sx={{ color: "#8B5CF6", fontWeight: 600, mb: 2 }}
+              >
+                Now Playing
+              </Typography>
+              <ListItem
+                secondaryAction={
+                  <IconButton
+                    edge="end"
+                    onClick={handleSkipClick}
+                    disabled={!isConnected}
+                    sx={{
+                      color: "#EC4899",
+                      background: "rgba(236, 72, 153, 0.1)",
+                      "&:hover": {
+                        background: "rgba(236, 72, 153, 0.2)",
+                      },
+                      "&:disabled": {
+                        color: "rgba(148, 163, 184, 0.3)",
+                      },
+                    }}
+                  >
+                    <SkipNextIcon />
+                  </IconButton>
                 }
-                secondaryTypographyProps={{ component: "div" }}
-              />
-            </ListItem>
-            <Box sx={{ px: 2, pb: 1 }}>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                <Typography variant="caption">
-                  {formatTime(playback?.positionSec)}
-                </Typography>
-                <LinearProgress
-                  variant={
-                    playback?.durationSec ? "determinate" : "indeterminate"
+                sx={{ px: 0 }}
+              >
+                <ListItemAvatar sx={{ minWidth: 96 }}>
+                  <Avatar
+                    variant="rounded"
+                    src={`https://img.youtube.com/vi/${currentVideo.id}/mqdefault.jpg`}
+                    alt={currentVideo.title}
+                    sx={{
+                      width: 80,
+                      height: 50,
+                      borderRadius: 1,
+                    }}
+                  />
+                </ListItemAvatar>
+                <ListItemText
+                  sx={{ my: 0 }}
+                  primary={
+                    <Typography variant="body1" sx={{ fontWeight: 500 }}>
+                      {currentVideo.title}
+                    </Typography>
                   }
-                  value={
-                    playback?.durationSec
-                      ? Math.max(
-                          0,
-                          Math.min(
-                            100,
-                            (100 * (playback?.positionSec || 0)) /
-                              (playback?.durationSec || 1)
-                          )
-                        )
-                      : 0
+                  secondary={
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
+                      <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                        Added by: {currentVideo.addedBy}
+                      </Typography>
+                      {currentVideo.isPlaylist && (
+                        <Chip
+                          size="small"
+                          icon={<PlaylistIcon sx={{ fontSize: 14 }} />}
+                          label="Playlist"
+                          sx={{
+                            height: 20,
+                            fontSize: "0.7rem",
+                            background: "rgba(139, 92, 246, 0.2)",
+                            color: "#A78BFA",
+                            border: "none",
+                          }}
+                        />
+                      )}
+                    </Box>
                   }
-                  sx={{ flex: 1 }}
+                  secondaryTypographyProps={{ component: "div" }}
                 />
-                <Typography variant="caption">
-                  {formatTime(playback?.durationSec)}
+              </ListItem>
+              <Box sx={{ px: 0, pt: 2 }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <Typography variant="caption" sx={{ color: "text.secondary", minWidth: 40 }}>
+                    {formatTime(playback?.positionSec)}
+                  </Typography>
+                  <LinearProgress
+                    variant={
+                      playback?.durationSec ? "determinate" : "indeterminate"
+                    }
+                    value={
+                      playback?.durationSec
+                        ? Math.max(
+                            0,
+                            Math.min(
+                              100,
+                              (100 * (playback?.positionSec || 0)) /
+                                (playback?.durationSec || 1)
+                            )
+                          )
+                        : 0
+                    }
+                    sx={{ flex: 1 }}
+                  />
+                  <Typography variant="caption" sx={{ color: "text.secondary", minWidth: 40, textAlign: "right" }}>
+                    {formatTime(playback?.durationSec)}
+                  </Typography>
+                </Box>
+                <Typography variant="caption" sx={{ color: "text.secondary", mt: 1, display: "block" }}>
+                  State: {playback?.state || "unknown"}
                 </Typography>
               </Box>
-              <Typography variant="caption" color="text.secondary">
-                State: {playback?.state || "unknown"}
-              </Typography>
             </Box>
-            <Divider sx={{ my: 2 }} />
           </>
         )}
 
-        <Typography variant="subtitle1" color="primary" gutterBottom>
-          Up Next {settingsState.roundRobinEnabled ? "(Round-robin)" : ""}
-        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+          <Typography variant="subtitle1" sx={{ color: "#8B5CF6", fontWeight: 600 }}>
+            Up Next
+          </Typography>
+          {settingsState.roundRobinEnabled && (
+            <Chip
+              label="Round-robin"
+              size="small"
+              sx={{
+                background: "rgba(16, 185, 129, 0.2)",
+                color: "#10B981",
+              }}
+            />
+          )}
+        </Box>
+
         <List>
           {queue.map((video, index) => (
             <ListItem
               key={index}
-              divider
               secondaryAction={
                 <IconButton
                   edge="end"
                   onClick={() => handleDeleteClick(video, index)}
-                  color="error"
+                  sx={{
+                    mr: .5,
+                    ml: .5,
+                    color: "#EF4444",
+                    background: "rgba(239, 68, 68, 0.1)",
+                    "&:hover": {
+                      background: "rgba(239, 68, 68, 0.2)",
+                    },
+                  }}
                 >
                   <DeleteIcon />
                 </IconButton>
               }
+              sx={{
+                borderRadius: 2,
+                mb: 1,
+                background: "rgba(139, 92, 246, 0.05)",
+                border: "1px solid rgba(148, 163, 184, 0.05)",
+                transition: "all 0.2s",
+                "&:hover": {
+                  background: "rgba(139, 92, 246, 0.1)",
+                  border: "1px solid rgba(139, 92, 246, 0.2)",
+                },
+              }}
             >
-              <ListItemAvatar>
+              <ListItemAvatar sx={{ minWidth: 96 }}>
                 <Avatar
                   variant="rounded"
                   src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
                   alt={video.title}
+                  sx={{
+                    width: 80,
+                    height: 50,
+                    borderRadius: 1,
+                  }}
                 />
               </ListItemAvatar>
               <ListItemText
-                primary={video.title}
+                sx={{ my: 0 }}
+                primary={
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 500,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                    }}
+                  >
+                    {video.title}
+                  </Typography>
+                }
                 secondary={
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      component="span"
-                    >
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
+                    <Typography variant="caption" sx={{ color: "text.secondary" }}>
                       Added by: {video.addedBy}
                     </Typography>
                     {video.isPlaylist && (
                       <Chip
                         size="small"
-                        icon={<PlaylistIcon />}
+                        icon={<PlaylistIcon sx={{ fontSize: 14 }} />}
                         label="Playlist"
-                        color="primary"
-                        variant="outlined"
+                        sx={{
+                          height: 20,
+                          fontSize: "0.7rem",
+                          background: "rgba(139, 92, 246, 0.2)",
+                          color: "#A78BFA",
+                          border: "none",
+                        }}
                       />
                     )}
                   </Box>
@@ -320,62 +436,115 @@ const Queue = () => {
             </ListItem>
           ))}
           {queue.length === 0 && (
-            <ListItem>
-              <ListItemText
-                primary="No videos in queue"
-                secondary="Add videos from the search tab"
-              />
-            </ListItem>
+            <Box
+              sx={{
+                p: 4,
+                textAlign: "center",
+                background: "rgba(148, 163, 184, 0.05)",
+                borderRadius: 2,
+                border: "1px dashed rgba(148, 163, 184, 0.2)",
+              }}
+            >
+              <QueueMusicIcon sx={{ fontSize: 48, color: "text.secondary", mb: 1 }} />
+              <Typography variant="body1" sx={{ color: "text.secondary" }}>
+                No videos in queue
+              </Typography>
+              <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                Add videos from the search tab
+              </Typography>
+            </Box>
           )}
         </List>
       </Paper>
 
+      {/* Delete Dialog */}
       <Dialog
         open={deleteDialogOpen}
         onClose={handleDeleteCancel}
         aria-labelledby="delete-dialog-title"
+        PaperProps={{
+          sx: {
+            background: "linear-gradient(180deg, #12121A 0%, #0A0A0F 100%)",
+            border: "1px solid rgba(148, 163, 184, 0.15)",
+            borderRadius: 3,
+          },
+        }}
       >
-        <DialogTitle id="delete-dialog-title">Remove from Queue</DialogTitle>
+        <DialogTitle id="delete-dialog-title" sx={{ fontWeight: 600 }}>
+          Remove from Queue
+        </DialogTitle>
         <DialogContent>
-          <Typography>
+          <Typography sx={{ color: "text.secondary" }}>
             Are you sure you want to remove "{videoToDelete?.video.title}" from
             the queue?
           </Typography>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={handleDeleteCancel} color="primary">
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={handleDeleteCancel}
+            sx={{
+              color: "text.secondary",
+              "&:hover": { background: "rgba(148, 163, 184, 0.1)" },
+            }}
+          >
             Cancel
           </Button>
           <Button
             onClick={handleDeleteConfirm}
-            color="error"
             variant="contained"
+            sx={{
+              background: "linear-gradient(135deg, #EF4444 0%, #DC2626 100%)",
+              "&:hover": {
+                background: "linear-gradient(135deg, #F87171 0%, #EF4444 100%)",
+              },
+            }}
           >
             Remove
           </Button>
         </DialogActions>
       </Dialog>
 
+      {/* Skip Dialog */}
       <Dialog
         open={skipDialogOpen}
         onClose={handleSkipCancel}
         aria-labelledby="skip-dialog-title"
+        PaperProps={{
+          sx: {
+            background: "linear-gradient(180deg, #12121A 0%, #0A0A0F 100%)",
+            border: "1px solid rgba(148, 163, 184, 0.15)",
+            borderRadius: 3,
+          },
+        }}
       >
-        <DialogTitle id="skip-dialog-title">Skip Current Song</DialogTitle>
+        <DialogTitle id="skip-dialog-title" sx={{ fontWeight: 600 }}>
+          Skip Current Song
+        </DialogTitle>
         <DialogContent>
-          <Typography>
+          <Typography sx={{ color: "text.secondary" }}>
             Are you sure you want to skip "{currentVideo?.title}" and move to
             the next song?
           </Typography>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={handleSkipCancel} color="primary">
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={handleSkipCancel}
+            sx={{
+              color: "text.secondary",
+              "&:hover": { background: "rgba(148, 163, 184, 0.1)" },
+            }}
+          >
             Cancel
           </Button>
           <Button
             onClick={handleSkipConfirm}
-            color="warning"
             variant="contained"
+            sx={{
+              background: "linear-gradient(135deg, #EC4899 0%, #DB2777 100%)",
+              "&:hover": {
+                background: "linear-gradient(135deg, #F472B6 0%, #EC4899 100%)",
+              },
+            }}
           >
             Skip
           </Button>
@@ -391,7 +560,16 @@ const Queue = () => {
         <Alert
           onClose={() => setNotification({ ...notification, open: false })}
           severity={notification.severity}
-          variant="filled"
+          sx={{
+            background:
+              notification.severity === "error"
+                ? "linear-gradient(135deg, #EF4444 0%, #DC2626 100%)"
+                : "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
+            color: "white",
+            "& .MuiAlert-icon": {
+              color: "white",
+            },
+          }}
         >
           {notification.message}
         </Alert>

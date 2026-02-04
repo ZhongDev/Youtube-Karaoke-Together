@@ -8,6 +8,7 @@ import {
   FormControlLabel,
   Checkbox,
 } from "@mui/material";
+import SettingsIcon from "@mui/icons-material/Settings";
 
 const Settings = () => {
   const [username, setUsername] = useState(() => {
@@ -69,31 +70,61 @@ const Settings = () => {
 
   return (
     <Box sx={{ p: 2, maxWidth: 800, mx: "auto" }}>
-      <Paper elevation={3} sx={{ p: 2 }}>
-        <Typography variant="h5" gutterBottom>
-          Settings
-        </Typography>
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <Paper
+        elevation={0}
+        sx={{
+          p: 3,
+          background: "rgba(18, 18, 26, 0.7)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(148, 163, 184, 0.1)",
+          borderRadius: 3,
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 3 }}>
+          <SettingsIcon sx={{ color: "#8B5CF6" }} />
+          <Typography variant="h5" sx={{ fontWeight: 600 }}>
+            Settings
+          </Typography>
+        </Box>
+
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
           <TextField
             fullWidth
             label="Your Name"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            placeholder="Enter your display name"
           />
+
           <FormControlLabel
             control={
               <Checkbox
                 checked={rememberMe}
                 onChange={(e) => setRememberMe(e.target.checked)}
-                color="primary"
+                sx={{
+                  color: "text.secondary",
+                  "&.Mui-checked": { color: "#8B5CF6" },
+                }}
               />
             }
             label="Remember me"
+            sx={{ color: "text.secondary" }}
           />
+
           <Button
             variant="contained"
             onClick={handleSave}
             disabled={!username.trim()}
+            sx={{
+              background: "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
+              py: 1.5,
+              "&:hover": {
+                background: "linear-gradient(135deg, #A78BFA 0%, #8B5CF6 100%)",
+              },
+              "&:disabled": {
+                background: "rgba(148, 163, 184, 0.2)",
+              },
+            }}
           >
             Save Settings
           </Button>

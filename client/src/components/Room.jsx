@@ -21,6 +21,7 @@ import YouTube from "react-youtube";
 import { useParams } from "react-router-dom";
 import SettingsIcon from "@mui/icons-material/Settings";
 import SignalWifiOffIcon from "@mui/icons-material/SignalWifiOff";
+import QueueMusicIcon from "@mui/icons-material/QueueMusic";
 import Tooltip from "@mui/material/Tooltip";
 import useSocket from "../hooks/useSocket";
 import config from "../ytkt-config.json";
@@ -388,19 +389,51 @@ const Room = () => {
         height: "100vh",
         p: 2,
         gap: 2,
-        bgcolor: "background.default",
+        background: "linear-gradient(180deg, #0A0A0F 0%, #12121A 100%)",
         color: "text.primary",
+        position: "relative",
+        overflow: "hidden",
       }}
     >
-      <Box sx={{ flex: 2, display: "flex", flexDirection: "column", gap: 2 }}>
+      {/* Background glow */}
+      <Box
+        sx={{
+          position: "absolute",
+          top: "-20%",
+          left: "-10%",
+          width: "600px",
+          height: "600px",
+          background: "radial-gradient(circle, rgba(139, 92, 246, 0.08) 0%, transparent 70%)",
+          filter: "blur(60px)",
+          pointerEvents: "none",
+        }}
+      />
+      <Box
+        sx={{
+          position: "absolute",
+          bottom: "-20%",
+          right: "-10%",
+          width: "500px",
+          height: "500px",
+          background: "radial-gradient(circle, rgba(236, 72, 153, 0.06) 0%, transparent 70%)",
+          filter: "blur(60px)",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Main Video Player */}
+      <Box sx={{ flex: 2, display: "flex", flexDirection: "column", gap: 2, position: "relative", zIndex: 1 }}>
         <Paper
-          elevation={3}
+          elevation={0}
           sx={{
             flex: 1,
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
-            bgcolor: "background.paper",
+            background: "rgba(18, 18, 26, 0.7)",
+            backdropFilter: "blur(20px)",
+            border: "1px solid rgba(148, 163, 184, 0.1)",
+            borderRadius: 3,
           }}
         >
           <Box
@@ -409,15 +442,36 @@ const Room = () => {
               display: "flex",
               justifyContent: "center",
               alignItems: "center",
-              bgcolor: "black",
+              bgcolor: "#000",
+              borderRadius: 3,
               position: "relative",
+              overflow: "hidden",
             }}
           >
             {!isConnected && (
-              <Box sx={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
+              <Box
+                sx={{
+                  position: "absolute",
+                  top: 16,
+                  right: 16,
+                  zIndex: 2,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  background: "rgba(239, 68, 68, 0.2)",
+                  backdropFilter: "blur(10px)",
+                  px: 2,
+                  py: 1,
+                  borderRadius: 2,
+                  border: "1px solid rgba(239, 68, 68, 0.3)",
+                }}
+              >
                 <Tooltip title="Disconnected. Attempting to reconnect...">
-                  <SignalWifiOffIcon color="error" />
+                  <SignalWifiOffIcon sx={{ color: "#EF4444", fontSize: 20 }} />
                 </Tooltip>
+                <Typography variant="caption" sx={{ color: "#EF4444" }}>
+                  Reconnecting...
+                </Typography>
               </Box>
             )}
             <Box
@@ -460,41 +514,72 @@ const Room = () => {
           </Box>
         </Paper>
       </Box>
-      <Box sx={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+
+      {/* Sidebar */}
+      <Box sx={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, position: "relative", zIndex: 1, minWidth: 0, maxWidth: 400 }}>
+        {/* Queue Panel */}
         <Paper
-          elevation={3}
+          elevation={0}
           sx={{
             flex: 1,
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
-            bgcolor: "background.paper",
+            background: "rgba(18, 18, 26, 0.7)",
+            backdropFilter: "blur(20px)",
+            border: "1px solid rgba(148, 163, 184, 0.1)",
+            borderRadius: 3,
           }}
         >
-          <Typography
-            variant="h6"
-            sx={{ p: 2, borderBottom: 1, borderColor: "divider" }}
+          <Box
+            sx={{
+              p: 2,
+              borderBottom: "1px solid rgba(148, 163, 184, 0.1)",
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+            }}
           >
-            Queue {!isConnected && "(Disconnected)"}
-          </Typography>
+            <QueueMusicIcon sx={{ color: "#8B5CF6" }} />
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              Queue
+            </Typography>
+            {!isConnected && (
+              <Typography
+                variant="caption"
+                sx={{
+                  ml: "auto",
+                  color: "#EF4444",
+                  background: "rgba(239, 68, 68, 0.1)",
+                  px: 1,
+                  py: 0.5,
+                  borderRadius: 1,
+                }}
+              >
+                Disconnected
+              </Typography>
+            )}
+          </Box>
 
           {queue.length === 0 && (
             <Box
               sx={{
                 p: 2,
-                bgcolor: "info.light",
-                color: "info.contrastText",
-                fontSize: "0.75rem",
+                mx: 2,
+                mt: 2,
+                background: "rgba(59, 130, 246, 0.1)",
+                border: "1px solid rgba(59, 130, 246, 0.2)",
+                borderRadius: 2,
               }}
             >
-              <Typography variant="caption">
+              <Typography variant="caption" sx={{ color: "text.secondary" }}>
                 This application uses YouTube API Services. By using this
                 service, you agree to the{" "}
                 <a
                   href="https://www.youtube.com/t/terms"
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: "inherit", textDecoration: "underline" }}
+                  style={{ color: "#60A5FA", textDecoration: "underline" }}
                 >
                   YouTube Terms of Service
                 </a>
@@ -502,32 +587,75 @@ const Room = () => {
               </Typography>
             </Box>
           )}
-          <List sx={{ flex: 1, overflow: "auto" }}>
+
+          <List sx={{ flex: 1, overflow: "auto", px: 1 }}>
             {queue.map((video, index) => (
-              <ListItem key={index} divider>
-                <ListItemAvatar>
+              <ListItem
+                key={index}
+                sx={{
+                  borderRadius: 2,
+                  mb: 1,
+                  px: 1.5,
+                  background: "rgba(139, 92, 246, 0.05)",
+                  border: "1px solid rgba(148, 163, 184, 0.05)",
+                  transition: "all 0.2s",
+                  "&:hover": {
+                    background: "rgba(139, 92, 246, 0.1)",
+                    border: "1px solid rgba(139, 92, 246, 0.2)",
+                  },
+                }}
+              >
+                <ListItemAvatar sx={{ minWidth: 76 }}>
                   <Avatar
                     variant="rounded"
                     src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
                     alt={video.title}
+                    sx={{
+                      width: 60,
+                      height: 40,
+                      borderRadius: 1,
+                    }}
                   />
                 </ListItemAvatar>
                 <ListItemText
-                  primary={video.title}
-                  secondary={`Added by: ${video.addedBy}`}
+                  sx={{ minWidth: 0 }}
+                  primary={
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 500,
+                        color: "text.primary",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {video.title}
+                    </Typography>
+                  }
+                  secondary={
+                    <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                      Added by: {video.addedBy}
+                    </Typography>
+                  }
                 />
               </ListItem>
             ))}
           </List>
         </Paper>
+
+        {/* QR Code Panel */}
         <Paper
-          elevation={3}
+          elevation={0}
           sx={{
             p: 2,
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
-            bgcolor: "background.paper",
+            background: "rgba(18, 18, 26, 0.7)",
+            backdropFilter: "blur(20px)",
+            border: "1px solid rgba(148, 163, 184, 0.1)",
+            borderRadius: 3,
           }}
         >
           <Box
@@ -540,6 +668,13 @@ const Room = () => {
               display: "flex",
               justifyContent: "center",
               alignItems: "center",
+              p: 2,
+              background: "white",
+              borderRadius: 2,
+              transition: "transform 0.2s",
+              "&:hover": {
+                transform: "scale(1.02)",
+              },
             }}
           >
             <img
@@ -552,15 +687,25 @@ const Room = () => {
               }}
             />
           </Box>
-          <Divider orientation="vertical" flexItem sx={{ mx: 2 }} />
+          <Divider orientation="vertical" flexItem sx={{ mx: 2, borderColor: "rgba(148, 163, 184, 0.1)" }} />
           <Box sx={{ flex: 1, display: "flex", justifyContent: "center" }}>
-            <IconButton onClick={handleSettingsOpen} color="primary">
+            <IconButton
+              onClick={handleSettingsOpen}
+              sx={{
+                color: "#8B5CF6",
+                background: "rgba(139, 92, 246, 0.1)",
+                "&:hover": {
+                  background: "rgba(139, 92, 246, 0.2)",
+                },
+              }}
+            >
               <SettingsIcon />
             </IconButton>
           </Box>
         </Paper>
       </Box>
 
+      {/* Settings Modal */}
       <Modal
         open={settingsOpen}
         onClose={handleSettingsClose}
@@ -572,11 +717,12 @@ const Room = () => {
             top: "50%",
             left: "50%",
             transform: "translate(-50%, -50%)",
-            width: 400,
-            bgcolor: "background.paper",
-            boxShadow: 24,
+            width: 420,
+            background: "linear-gradient(180deg, #12121A 0%, #0A0A0F 100%)",
+            border: "1px solid rgba(148, 163, 184, 0.15)",
+            boxShadow: "0 25px 50px rgba(0, 0, 0, 0.5)",
             p: 4,
-            borderRadius: 1,
+            borderRadius: 3,
           }}
         >
           <Typography
@@ -584,6 +730,7 @@ const Room = () => {
             variant="h6"
             component="h2"
             gutterBottom
+            sx={{ fontWeight: 600, mb: 3 }}
           >
             Backend Settings
           </Typography>
@@ -614,10 +761,27 @@ const Room = () => {
             type="number"
           />
           <Box
-            sx={{ mt: 2, display: "flex", justifyContent: "flex-end", gap: 1 }}
+            sx={{ mt: 3, display: "flex", justifyContent: "flex-end", gap: 2 }}
           >
-            <Button onClick={handleSettingsClose}>Cancel</Button>
-            <Button onClick={handleSaveSettings} variant="contained">
+            <Button
+              onClick={handleSettingsClose}
+              sx={{
+                color: "text.secondary",
+                "&:hover": { background: "rgba(148, 163, 184, 0.1)" },
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveSettings}
+              variant="contained"
+              sx={{
+                background: "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
+                "&:hover": {
+                  background: "linear-gradient(135deg, #A78BFA 0%, #8B5CF6 100%)",
+                },
+              }}
+            >
               Save
             </Button>
           </Box>
@@ -634,6 +798,14 @@ const Room = () => {
           onClose={() => setNotification({ ...notification, open: false })}
           severity={notification.severity}
           variant="filled"
+          sx={{
+            background:
+              notification.severity === "error"
+                ? "linear-gradient(135deg, #EF4444 0%, #DC2626 100%)"
+                : notification.severity === "success"
+                ? "linear-gradient(135deg, #10B981 0%, #059669 100%)"
+                : "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
+          }}
         >
           {notification.message}
         </Alert>
