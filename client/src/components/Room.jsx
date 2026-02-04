@@ -1,20 +1,15 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   Box,
+  Chip,
   Divider,
   Paper,
   Typography,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemAvatar,
-  Avatar,
   IconButton,
   Modal,
   TextField,
   Button,
   Alert,
-  CircularProgress,
   Snackbar,
 } from "@mui/material";
 import YouTube from "react-youtube";
@@ -72,6 +67,9 @@ const Room = () => {
     severity: "info",
   });
   const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const [settingsState, setSettingsState] = useState({
+    roundRobinEnabled: false,
+  });
 
   // Use the new socket hook
   const {
@@ -193,6 +191,7 @@ const Room = () => {
       setCurrentVideo(room.currentVideo);
       setQueue(room.queue || []);
       setPlayback(room.playback || null);
+      setSettingsState(room.settings || { roundRobinEnabled: false });
       setIsLoading(false);
 
       if (room.currentVideo && playerRef.current) {
@@ -245,12 +244,16 @@ const Room = () => {
     socket.on("video-changed", handleVideoChanged);
     socket.on("queue-updated", handleQueueUpdated);
     socket.on("playback-updated", (pb) => setPlayback(pb));
+    socket.on("settings-updated", (settings) =>
+      setSettingsState(settings || { roundRobinEnabled: false })
+    );
 
     return () => {
       socket.off("room-state", handleRoomState);
       socket.off("video-changed", handleVideoChanged);
       socket.off("queue-updated", handleQueueUpdated);
       socket.off("playback-updated");
+      socket.off("settings-updated");
     };
   }, [roomId, socket, isConnected, joinRoom, currentVideo]);
 
@@ -540,24 +543,50 @@ const Room = () => {
               gap: 1,
             }}
           >
-            <QueueMusicIcon sx={{ color: "#8B5CF6" }} />
-            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+            <QueueMusicIcon sx={{ color: "#8B5CF6", fontSize: 20 }} />
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
               Queue
             </Typography>
+            {queue.length > 0 && (
+              <Chip
+                label={queue.length}
+                size="small"
+                sx={{
+                  height: 18,
+                  minWidth: 18,
+                  fontSize: "0.65rem",
+                  background: "rgba(139, 92, 246, 0.2)",
+                  color: "#A78BFA",
+                  "& .MuiChip-label": { px: 0.75 },
+                }}
+              />
+            )}
+            {settingsState.roundRobinEnabled && (
+              <Chip
+                label="RR"
+                size="small"
+                sx={{
+                  height: 18,
+                  fontSize: "0.6rem",
+                  background: "rgba(16, 185, 129, 0.15)",
+                  color: "#10B981",
+                  "& .MuiChip-label": { px: 0.75 },
+                }}
+              />
+            )}
             {!isConnected && (
-              <Typography
-                variant="caption"
+              <Chip
+                label="Offline"
+                size="small"
                 sx={{
                   ml: "auto",
+                  height: 18,
+                  fontSize: "0.6rem",
+                  background: "rgba(239, 68, 68, 0.15)",
                   color: "#EF4444",
-                  background: "rgba(239, 68, 68, 0.1)",
-                  px: 1,
-                  py: 0.5,
-                  borderRadius: 1,
+                  "& .MuiChip-label": { px: 0.75 },
                 }}
-              >
-                Disconnected
-              </Typography>
+              />
             )}
           </Box>
 
@@ -588,60 +617,83 @@ const Room = () => {
             </Box>
           )}
 
-          <List sx={{ flex: 1, overflow: "auto", px: 1 }}>
+          {/* Queue List */}
+          <Box sx={{ flex: 1, overflow: "auto", px: 1.5, py: 1, display: "flex", flexDirection: "column", gap: 1 }}>
             {queue.map((video, index) => (
-              <ListItem
+              <Box
                 key={index}
                 sx={{
-                  borderRadius: 2,
-                  mb: 1,
-                  px: 1.5,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1.5,
+                  p: 1,
+                  borderRadius: 1.5,
                   background: "rgba(139, 92, 246, 0.05)",
                   border: "1px solid rgba(148, 163, 184, 0.05)",
-                  transition: "all 0.2s",
+                  transition: "all 0.2s ease",
                   "&:hover": {
                     background: "rgba(139, 92, 246, 0.1)",
                     border: "1px solid rgba(139, 92, 246, 0.2)",
                   },
                 }}
               >
-                <ListItemAvatar sx={{ minWidth: 76 }}>
-                  <Avatar
-                    variant="rounded"
-                    src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
-                    alt={video.title}
-                    sx={{
-                      width: 60,
-                      height: 40,
-                      borderRadius: 1,
-                    }}
-                  />
-                </ListItemAvatar>
-                <ListItemText
-                  sx={{ minWidth: 0 }}
-                  primary={
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        fontWeight: 500,
-                        color: "text.primary",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {video.title}
-                    </Typography>
-                  }
-                  secondary={
-                    <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
-                      Added by: {video.addedBy}
-                    </Typography>
-                  }
+                {/* Thumbnail */}
+                <Box
+                  component="img"
+                  src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
+                  alt={video.title}
+                  sx={{
+                    width: 56,
+                    height: 32,
+                    borderRadius: 0.75,
+                    objectFit: "cover",
+                    flexShrink: 0,
+                  }}
                 />
-              </ListItem>
+
+                {/* Content */}
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      fontWeight: 500,
+                      color: "text.primary",
+                      display: "block",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    {video.title}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                      fontSize: "0.65rem",
+                      display: "block",
+                    }}
+                  >
+                    {video.addedBy}
+                  </Typography>
+                </Box>
+              </Box>
             ))}
-          </List>
+
+            {/* Empty State */}
+            {queue.length === 0 && (
+              <Box
+                sx={{
+                  py: 3,
+                  textAlign: "center",
+                  color: "text.secondary",
+                }}
+              >
+                <Typography variant="caption">Queue is empty</Typography>
+              </Box>
+            )}
+          </Box>
         </Paper>
 
         {/* QR Code Panel */}

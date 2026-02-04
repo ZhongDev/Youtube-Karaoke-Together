@@ -3,11 +3,6 @@ import {
   Box,
   TextField,
   Button,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemAvatar,
-  Avatar,
   IconButton,
   Paper,
   Typography,
@@ -31,8 +26,6 @@ import {
   QueueMusic as QueueIcon,
   Settings as SettingsIcon,
   SkipNext as SkipIcon,
-} from "@mui/icons-material";
-import {
   Add as AddIcon,
   PlaylistAdd as PlaylistIcon,
 } from "@mui/icons-material";
@@ -480,122 +473,141 @@ const Control = () => {
           borderRadius: 3,
         }}
       >
-        <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-          Search Results{" "}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+          <Typography variant="h6" sx={{ fontWeight: 600 }}>
+            Search Results
+          </Typography>
           {searchResults.length > 0 && (
             <Chip
               label={searchResults.length}
               size="small"
               sx={{
-                ml: 1,
+                height: 20,
+                minWidth: 20,
+                fontSize: "0.7rem",
                 background: "rgba(139, 92, 246, 0.2)",
                 color: "#A78BFA",
               }}
             />
           )}
-        </Typography>
-        <List>
+        </Box>
+
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {searchResults.map((result, index) => (
-            <ListItem
+            <Box
               key={result.id}
               ref={index === searchResults.length - 1 ? lastResultRef : null}
-              secondaryAction={
-                <IconButton
-                  edge="end"
-                  onClick={() => addToQueue(result)}
-                  disabled={!isConnected}
-                  sx={{
-                    color: "#10B981",
-                    background: "rgba(16, 185, 129, 0.1)",
-                    "&:hover": {
-                      background: "rgba(16, 185, 129, 0.2)",
-                    },
-                    "&:disabled": {
-                      color: "rgba(148, 163, 184, 0.3)",
-                    },
-                  }}
-                >
-                  <AddIcon />
-                </IconButton>
-              }
               sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 2,
+                p: 1.5,
                 borderRadius: 2,
-                mb: 1,
-                pl: 2,
-                pr: 2,
                 background: "rgba(139, 92, 246, 0.05)",
-                border: "1px solid rgba(148, 163, 184, 0.05)",
-                transition: "all 0.2s",
+                border: "1px solid rgba(148, 163, 184, 0.08)",
+                transition: "all 0.2s ease",
                 "&:hover": {
                   background: "rgba(139, 92, 246, 0.1)",
                   border: "1px solid rgba(139, 92, 246, 0.2)",
                 },
               }}
             >
-              <ListItemAvatar sx={{ minWidth: 96, mr: 1 }}>
-                <Avatar
-                  variant="rounded"
-                  src={`https://img.youtube.com/vi/${result.id}/mqdefault.jpg`}
-                  alt={result.title}
-                  sx={{
-                    width: 80,
-                    height: 50,
-                    borderRadius: 1,
-                  }}
-                />
-              </ListItemAvatar>
-              <ListItemText
-                sx={{ my: 0 }}
-                primary={
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontWeight: 500,
-                      color: "text.primary",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                    }}
-                  >
-                    {result.title}
-                  </Typography>
-                }
-                secondary={
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
-                    <Typography
-                      variant="caption"
-                      sx={{ color: "text.secondary" }}
-                    >
-                      {result.channelTitle}
-                    </Typography>
-                    {result.isPlaylist && (
-                      <Chip
-                        size="small"
-                        icon={<PlaylistIcon sx={{ fontSize: 14 }} />}
-                        label="Playlist"
-                        sx={{
-                          height: 20,
-                          fontSize: "0.7rem",
-                          background: "rgba(139, 92, 246, 0.2)",
-                          color: "#A78BFA",
-                          border: "none",
-                        }}
-                      />
-                    )}
-                  </Box>
-                }
-                secondaryTypographyProps={{ component: "div" }}
+              {/* Thumbnail */}
+              <Box
+                component="img"
+                src={`https://img.youtube.com/vi/${result.id}/mqdefault.jpg`}
+                alt={result.title}
+                sx={{
+                  width: 80,
+                  height: 45,
+                  borderRadius: 1,
+                  objectFit: "cover",
+                  flexShrink: 0,
+                }}
               />
-            </ListItem>
+
+              {/* Content */}
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontWeight: 500,
+                    color: "text.primary",
+                    mb: 0.5,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {result.title}
+                </Typography>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                  <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                    {result.channelTitle}
+                  </Typography>
+                  {result.isPlaylist && (
+                    <Chip
+                      size="small"
+                      icon={<PlaylistIcon sx={{ fontSize: 12 }} />}
+                      label="Playlist"
+                      sx={{
+                        height: 18,
+                        fontSize: "0.65rem",
+                        background: "rgba(139, 92, 246, 0.2)",
+                        color: "#A78BFA",
+                        border: "none",
+                        "& .MuiChip-icon": { color: "#A78BFA" },
+                      }}
+                    />
+                  )}
+                </Box>
+              </Box>
+
+              {/* Add Button */}
+              <IconButton
+                onClick={() => addToQueue(result)}
+                disabled={!isConnected}
+                sx={{
+                  flexShrink: 0,
+                  color: "#10B981",
+                  background: "rgba(16, 185, 129, 0.1)",
+                  "&:hover": {
+                    background: "rgba(16, 185, 129, 0.2)",
+                  },
+                  "&:disabled": {
+                    color: "rgba(148, 163, 184, 0.3)",
+                    background: "rgba(148, 163, 184, 0.05)",
+                  },
+                }}
+              >
+                <AddIcon />
+              </IconButton>
+            </Box>
           ))}
+
+          {/* Loading More Indicator */}
           {isLoadingMore && (
             <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
               <CircularProgress size={24} sx={{ color: "#8B5CF6" }} />
             </Box>
           )}
-        </List>
+
+          {/* Empty State */}
+          {searchResults.length === 0 && hasSearched && !isSearching && (
+            <Box
+              sx={{
+                py: 4,
+                textAlign: "center",
+                color: "text.secondary",
+              }}
+            >
+              <Typography variant="body2">No results found</Typography>
+            </Box>
+          )}
+        </Box>
       </Paper>
     </Box>
   );
