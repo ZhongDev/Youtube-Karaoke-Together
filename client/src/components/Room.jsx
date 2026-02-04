@@ -17,6 +17,8 @@ import { useParams } from "react-router-dom";
 import SettingsIcon from "@mui/icons-material/Settings";
 import SignalWifiOffIcon from "@mui/icons-material/SignalWifiOff";
 import QueueMusicIcon from "@mui/icons-material/QueueMusic";
+import FullscreenIcon from "@mui/icons-material/Fullscreen";
+import FullscreenExitIcon from "@mui/icons-material/FullscreenExit";
 import Tooltip from "@mui/material/Tooltip";
 import useSocket from "../hooks/useSocket";
 import config from "../ytkt-config.json";
@@ -49,6 +51,7 @@ const Room = () => {
   const { roomId } = useParams();
   const playerRef = useRef(null);
   const lastVideoIdRef = useRef(null);
+  const roomContainerRef = useRef(null);
 
   const [qrCode, setQrCode] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -70,6 +73,7 @@ const Room = () => {
   const [settingsState, setSettingsState] = useState({
     roundRobinEnabled: false,
   });
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Use the new socket hook
   const {
@@ -126,6 +130,61 @@ const Room = () => {
   const handleFrontendPortChange = (event) => {
     setFrontendPort(event.target.value);
   };
+
+  // Fullscreen handlers
+  const enterFullscreen = useCallback(async () => {
+    if (roomContainerRef.current) {
+      try {
+        if (roomContainerRef.current.requestFullscreen) {
+          await roomContainerRef.current.requestFullscreen();
+        } else if (roomContainerRef.current.webkitRequestFullscreen) {
+          await roomContainerRef.current.webkitRequestFullscreen();
+        } else if (roomContainerRef.current.msRequestFullscreen) {
+          await roomContainerRef.current.msRequestFullscreen();
+        }
+        setIsFullscreen(true);
+      } catch (err) {
+        console.error("[ERR] Failed to enter fullscreen:", err);
+      }
+    }
+  }, []);
+
+  const exitFullscreen = useCallback(async () => {
+    try {
+      if (document.exitFullscreen) {
+        await document.exitFullscreen();
+      } else if (document.webkitExitFullscreen) {
+        await document.webkitExitFullscreen();
+      } else if (document.msExitFullscreen) {
+        await document.msExitFullscreen();
+      }
+      setIsFullscreen(false);
+    } catch (err) {
+      console.error("[ERR] Failed to exit fullscreen:", err);
+    }
+  }, []);
+
+  // Listen for fullscreen change events (e.g., user presses Escape)
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.msFullscreenElement
+      );
+      setIsFullscreen(isCurrentlyFullscreen);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    document.addEventListener("msfullscreenchange", handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("msfullscreenchange", handleFullscreenChange);
+    };
+  }, []);
 
   // Update the fetchQRCode function to include roomId in its dependencies
   const fetchQRCode = useCallback(async () => {
@@ -373,6 +432,7 @@ const Room = () => {
       playsinline: 1,
       mute: 0,
       enablejsapi: 1,
+      fs: 0, // Disable YouTube's fullscreen button (we use our own)
     },
   };
 
@@ -387,45 +447,69 @@ const Room = () => {
 
   return (
     <Box
+      ref={roomContainerRef}
       sx={{
         display: "flex",
         height: "100vh",
-        p: 2,
-        gap: 2,
-        background: "linear-gradient(180deg, #0A0A0F 0%, #12121A 100%)",
+        p: isFullscreen ? 0 : 2,
+        gap: isFullscreen ? 0 : 2,
+        background: isFullscreen ? "#000" : "linear-gradient(180deg, #0A0A0F 0%, #12121A 100%)",
         color: "text.primary",
         position: "relative",
         overflow: "hidden",
+        transition: "padding 0.3s ease, gap 0.3s ease, background 0.3s ease",
       }}
     >
-      {/* Background glow */}
-      <Box
-        sx={{
-          position: "absolute",
-          top: "-20%",
-          left: "-10%",
-          width: "600px",
-          height: "600px",
-          background: "radial-gradient(circle, rgba(139, 92, 246, 0.08) 0%, transparent 70%)",
-          filter: "blur(60px)",
-          pointerEvents: "none",
-        }}
-      />
-      <Box
-        sx={{
-          position: "absolute",
-          bottom: "-20%",
-          right: "-10%",
-          width: "500px",
-          height: "500px",
-          background: "radial-gradient(circle, rgba(236, 72, 153, 0.06) 0%, transparent 70%)",
-          filter: "blur(60px)",
-          pointerEvents: "none",
-        }}
-      />
+      {/* Background glow - hidden in fullscreen */}
+      {!isFullscreen && (
+        <>
+          <Box
+            sx={{
+              position: "absolute",
+              top: "-20%",
+              left: "-10%",
+              width: "600px",
+              height: "600px",
+              background: "radial-gradient(circle, rgba(139, 92, 246, 0.08) 0%, transparent 70%)",
+              filter: "blur(60px)",
+              pointerEvents: "none",
+            }}
+          />
+          <Box
+            sx={{
+              position: "absolute",
+              bottom: "-20%",
+              right: "-10%",
+              width: "500px",
+              height: "500px",
+              background: "radial-gradient(circle, rgba(236, 72, 153, 0.06) 0%, transparent 70%)",
+              filter: "blur(60px)",
+              pointerEvents: "none",
+            }}
+          />
+        </>
+      )}
 
       {/* Main Video Player */}
-      <Box sx={{ flex: 2, display: "flex", flexDirection: "column", gap: 2, position: "relative", zIndex: 1 }}>
+      <Box
+        sx={{
+          flex: isFullscreen ? 1 : 2,
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+          position: isFullscreen ? "absolute" : "relative",
+          zIndex: 1,
+          ...(isFullscreen && {
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: "100%",
+            height: "100%",
+          }),
+          transition: "all 0.3s ease",
+        }}
+      >
         <Paper
           elevation={0}
           sx={{
@@ -433,10 +517,11 @@ const Room = () => {
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
-            background: "rgba(18, 18, 26, 0.7)",
-            backdropFilter: "blur(20px)",
-            border: "1px solid rgba(148, 163, 184, 0.1)",
-            borderRadius: 3,
+            background: isFullscreen ? "#000" : "rgba(18, 18, 26, 0.7)",
+            backdropFilter: isFullscreen ? "none" : "blur(20px)",
+            border: isFullscreen ? "none" : "1px solid rgba(148, 163, 184, 0.1)",
+            borderRadius: isFullscreen ? 0 : 3,
+            transition: "all 0.3s ease",
           }}
         >
           <Box
@@ -446,9 +531,10 @@ const Room = () => {
               justifyContent: "center",
               alignItems: "center",
               bgcolor: "#000",
-              borderRadius: 3,
+              borderRadius: isFullscreen ? 0 : 3,
               position: "relative",
               overflow: "hidden",
+              transition: "border-radius 0.3s ease",
             }}
           >
             {!isConnected && (
@@ -510,16 +596,56 @@ const Room = () => {
                   width: "100%",
                   height: "100%",
                 }}
-                iframeClassName="youtube-player"
+                iframeClassName={isFullscreen ? "youtube-player-fullscreen" : "youtube-player"}
                 allow="autoplay"
               />
             </Box>
+            {/* Exit Fullscreen Button - shown only in fullscreen mode */}
+            {isFullscreen && (
+              <Tooltip title="Exit Fullscreen">
+                <IconButton
+                  onClick={exitFullscreen}
+                  sx={{
+                    position: "absolute",
+                    bottom: 24,
+                    right: 24,
+                    zIndex: 10,
+                    color: "#fff",
+                    background: "rgba(0, 0, 0, 0.6)",
+                    backdropFilter: "blur(10px)",
+                    border: "1px solid rgba(255, 255, 255, 0.2)",
+                    opacity: 0.7,
+                    transition: "all 0.2s ease",
+                    "&:hover": {
+                      background: "rgba(139, 92, 246, 0.8)",
+                      opacity: 1,
+                      transform: "scale(1.1)",
+                    },
+                  }}
+                >
+                  <FullscreenExitIcon />
+                </IconButton>
+              </Tooltip>
+            )}
           </Box>
         </Paper>
       </Box>
 
-      {/* Sidebar */}
-      <Box sx={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, position: "relative", zIndex: 1, minWidth: 0, maxWidth: 400 }}>
+      {/* Sidebar - hidden in fullscreen */}
+      <Box
+        sx={{
+          flex: 1,
+          display: isFullscreen ? "none" : "flex",
+          flexDirection: "column",
+          gap: 2,
+          position: "relative",
+          zIndex: 1,
+          minWidth: 0,
+          maxWidth: 400,
+          opacity: isFullscreen ? 0 : 1,
+          transition: "opacity 0.3s ease",
+        }}
+      >
         {/* Queue Panel */}
         <Paper
           elevation={0}
@@ -625,7 +751,7 @@ const Room = () => {
                 sx={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 1.5,
+                  gap: 2,
                   p: 1,
                   borderRadius: 1.5,
                   background: "rgba(139, 92, 246, 0.05)",
@@ -740,19 +866,35 @@ const Room = () => {
             />
           </Box>
           <Divider orientation="vertical" flexItem sx={{ mx: 2, borderColor: "rgba(148, 163, 184, 0.1)" }} />
-          <Box sx={{ flex: 1, display: "flex", justifyContent: "center" }}>
-            <IconButton
-              onClick={handleSettingsOpen}
-              sx={{
-                color: "#8B5CF6",
-                background: "rgba(139, 92, 246, 0.1)",
-                "&:hover": {
-                  background: "rgba(139, 92, 246, 0.2)",
-                },
-              }}
-            >
-              <SettingsIcon />
-            </IconButton>
+          <Box sx={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 1.5 }}>
+            <Tooltip title="Settings">
+              <IconButton
+                onClick={handleSettingsOpen}
+                sx={{
+                  color: "#8B5CF6",
+                  background: "rgba(139, 92, 246, 0.1)",
+                  "&:hover": {
+                    background: "rgba(139, 92, 246, 0.2)",
+                  },
+                }}
+              >
+                <SettingsIcon />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Fullscreen">
+              <IconButton
+                onClick={enterFullscreen}
+                sx={{
+                  color: "#8B5CF6",
+                  background: "rgba(139, 92, 246, 0.1)",
+                  "&:hover": {
+                    background: "rgba(139, 92, 246, 0.2)",
+                  },
+                }}
+              >
+                <FullscreenIcon />
+              </IconButton>
+            </Tooltip>
           </Box>
         </Paper>
       </Box>
