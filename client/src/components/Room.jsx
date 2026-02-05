@@ -250,6 +250,27 @@ const Room = () => {
           playerRef.current.clearVideo();
         }
         lastVideoIdRef.current = null;
+        return;
+      }
+
+      const incomingId = video?.id;
+      if (incomingId && lastVideoIdRef.current === incomingId) {
+        // Same video ID re-queued; force a restart
+        if (playerRef.current) {
+          try {
+            playerRef.current.loadVideoById({ videoId: incomingId, startSeconds: 0 });
+            playerRef.current.playVideo();
+          } catch (err) {
+            try {
+              playerRef.current.seekTo(0, true);
+              playerRef.current.playVideo();
+            } catch (_) {}
+          }
+        } else {
+          // Ensure it reloads when player becomes ready
+          lastVideoIdRef.current = null;
+        }
+        return;
       }
       // Note: actual video loading is handled by the separate useEffect that watches currentVideo
     };
