@@ -88,20 +88,22 @@ const Queue = () => {
       setCurrentVideo(video);
     };
 
+    const handleSettingsUpdated = (settings) =>
+      setSettingsState(settings || { roundRobinEnabled: false });
+    const handlePlaybackUpdated = (pb) => setPlayback(pb);
+
     socket.on("room-state", handleRoomState);
     socket.on("queue-updated", handleQueueUpdated);
-    socket.on("settings-updated", (settings) =>
-      setSettingsState(settings || { roundRobinEnabled: false })
-    );
+    socket.on("settings-updated", handleSettingsUpdated);
     socket.on("video-changed", handleVideoChanged);
-    socket.on("playback-updated", (pb) => setPlayback(pb));
+    socket.on("playback-updated", handlePlaybackUpdated);
 
     return () => {
       socket.off("room-state", handleRoomState);
       socket.off("queue-updated", handleQueueUpdated);
       socket.off("video-changed", handleVideoChanged);
-      socket.off("settings-updated");
-      socket.off("playback-updated");
+      socket.off("settings-updated", handleSettingsUpdated);
+      socket.off("playback-updated", handlePlaybackUpdated);
     };
   }, [roomId, socket, isConnected, joinRoom]);
 
