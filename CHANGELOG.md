@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - 2026-02-05 - Security, Controls, and UI
+
+### Added
+
+- Room admin tools for controller management and in-place renaming (updates existing queue entries)
+- Capacity limits via `server-limits.json` for rooms, controllers, queue size, and payload bounds
+- Custom fullscreen player mode
+
+### Fixed
+
+- Playback sync on control pages and queue progress updates
+- Auto-advance handling and restart behavior when the next queued video matches the current video
+
+### Changed
+
+- Major UI refresh and updated video listing presentation
+- npm audit dependency fixes
+- .gitignore updates
+
+### Security
+
+- Token-based room control with controller registration and player/admin separation
+- Authenticated search API with rate limiting
+- Tightened CORS and Socket.IO payload size enforcement
+
 ## [1.3.0] - 2024-01-15 - Enhanced User Experience & Error Handling
 
 ### Added
