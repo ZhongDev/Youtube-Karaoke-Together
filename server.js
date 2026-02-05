@@ -4,37 +4,75 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const QRCode = require('qrcode');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
+const rateLimit = require('express-rate-limit');
 
-// Load configuration
-let config;
-try {
-    // Try to load from client/src first
-    config = JSON.parse(fs.readFileSync(path.join(__dirname, 'client/src/ytkt-config.json'), 'utf8'));
-} catch (error) {
-    // Fallback to root directory
-    config = JSON.parse(fs.readFileSync(path.join(__dirname, 'ytkt-config.json'), 'utf8'));
-}
+// ----- Configuration -----
+const PORT = Number(process.env.PORT) || 8080;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const PUBLIC_FRONTEND_ORIGIN = process.env.PUBLIC_FRONTEND_ORIGIN || 'http://localhost:3000';
 
 // Log environment variables (excluding sensitive data)
 console.log('[INFO] Environment loaded:', {
-    PORT: process.env.PORT,
+    PORT,
+    NODE_ENV,
+    PUBLIC_FRONTEND_ORIGIN,
     YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY ? 'Configured' : 'Not configured'
 });
 
-console.log('[INFO] Configuration loaded:', config);
-
 const app = express();
 const server = http.createServer(app);
+
+// ----- CORS Configuration -----
+const allowedOrigins = [PUBLIC_FRONTEND_ORIGIN];
+if (NODE_ENV === 'development') {
+    allowedOrigins.push('http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173');
+}
+
+const corsOptions = {
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.some(allowed => origin.startsWith(allowed.replace(/:\d+$/, '')))) {
+            callback(null, true);
+        } else {
+            console.log(`[WARN] CORS blocked origin: ${origin}`);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    methods: ['GET', 'POST'],
+    credentials: true
+};
+
+app.use(cors(corsOptions));
+
+// Socket.IO with restricted CORS and /ws/ path for production
 const io = socketIo(server, {
+    path: NODE_ENV === 'production' ? '/ws/' : '/socket.io/',
     cors: {
-        origin: `${config.frontend.ssl ? 'https' : 'http'}://${config.frontend.hostname}:${config.frontend.port}`,
-        methods: ["GET", "POST"],
+        origin: allowedOrigins,
+        methods: ['GET', 'POST'],
         credentials: true
     }
+});
+
+// ----- Rate Limiting -----
+const searchLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 30, // 30 requests per minute per IP
+    message: { error: 'Too many search requests, please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+const roomCreateLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10, // 10 room creations per minute per IP
+    message: { error: 'Too many room creations, please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
 });
 
 // Logging middleware
@@ -49,35 +87,62 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 
-// Store active rooms and their queues
+// ----- Utility Functions -----
+function generateSecureToken() {
+    return crypto.randomBytes(32).toString('base64url');
+}
+
+function sanitizeUsername(name) {
+    if (!name || typeof name !== 'string') return null;
+    // Remove [ and ] characters
+    const sanitized = name.replace(/[\[\]]/g, '').trim();
+    return sanitized.length > 0 ? sanitized.substring(0, 50) : null;
+}
+
+function makeUniqueUsername(room, baseName) {
+    const existingNames = new Set(
+        Array.from(room.controllers.values()).map(c => c.name)
+    );
+    if (!existingNames.has(baseName)) {
+        return baseName;
+    }
+    let counter = 2;
+    while (existingNames.has(`${baseName} [${counter}]`)) {
+        counter++;
+    }
+    return `${baseName} [${counter}]`;
+}
+
+// ----- Room State -----
 const rooms = new Map();
 
-// ----- Room helpers -----
 function createEmptyRoom() {
     return {
         queue: [],
         currentVideo: null,
-        // User-configurable settings per room
         settings: {
             roundRobinEnabled: false,
         },
-        // Internal state for round-robin ordering
         roundRobin: {
-            participants: [], // ordered list of usernames
-            lastServedIdx: -1, // index into participants of who last played
+            participants: [],
+            lastServedIdx: -1,
         },
-        // Live playback state snapshot reported by the room's player
         playback: {
-            state: 'unstarted', // 'unstarted' | 'playing' | 'paused' | 'buffering' | 'ended' | 'cued'
+            state: 'unstarted',
             positionSec: 0,
             durationSec: null,
             updatedAt: Date.now(),
             videoId: null,
         },
         createdAt: Date.now(),
+        // Auth keys
+        controlMasterKey: generateSecureToken(),
+        playerKey: generateSecureToken(),
+        // Controller management
+        controllers: new Map(), // controllerKey -> { name, enabled, createdAt }
+        allowNewControllers: true,
     };
 }
 
@@ -89,43 +154,81 @@ function ensureRoom(roomId) {
 }
 
 function getPublicRoomState(room) {
-    // Only expose fields needed by clients
     return {
         queue: room.queue,
         currentVideo: room.currentVideo,
         settings: room.settings,
         playback: room.playback,
         createdAt: room.createdAt,
+        allowNewControllers: room.allowNewControllers,
     };
 }
 
+function getAdminRoomState(room) {
+    // Include controller list for admin
+    const controllers = [];
+    for (const [key, data] of room.controllers.entries()) {
+        controllers.push({
+            id: key.substring(0, 8), // Partial key for identification
+            name: data.name,
+            enabled: data.enabled,
+            createdAt: data.createdAt,
+        });
+    }
+    return {
+        ...getPublicRoomState(room),
+        controllers,
+    };
+}
+
+// ----- Auth Helpers -----
+function validateControllerKey(room, controllerKey) {
+    if (!controllerKey || !room.controllers.has(controllerKey)) {
+        return { valid: false, error: 'Invalid controller key' };
+    }
+    const controller = room.controllers.get(controllerKey);
+    if (!controller.enabled) {
+        return { valid: false, error: 'Controller has been disabled' };
+    }
+    return { valid: true, controller };
+}
+
+function validatePlayerKey(room, playerKey) {
+    if (!playerKey || playerKey !== room.playerKey) {
+        return { valid: false, error: 'Invalid player key' };
+    }
+    return { valid: true };
+}
+
+function validateControlMasterKey(room, masterKey) {
+    if (!masterKey || masterKey !== room.controlMasterKey) {
+        return { valid: false, error: 'Invalid control master key' };
+    }
+    return { valid: true };
+}
+
+// ----- Round Robin Helpers -----
 function indexOfParticipant(room, username) {
     return room.roundRobin.participants.findIndex((u) => u === username);
 }
 
 function upsertParticipant(room, username) {
-    if (!username) return; // ignore anonymous
+    if (!username) return;
     const idx = indexOfParticipant(room, username);
     if (idx === -1) {
         room.roundRobin.participants.push(username);
     }
 }
 
-// We intentionally avoid pruning participants to preserve join order priority.
-// Participants remain in the list; we will simply skip users with no items.
-function pruneParticipants(_) { /* no-op to preserve join order */ }
-
 function reorderQueueRoundRobin(room) {
-    if (!room.settings.roundRobinEnabled) return; // nothing to do
+    if (!room.settings.roundRobinEnabled) return;
     if (room.queue.length === 0) return;
 
-    // Build per-user queues preserving insertion order
     const userToItems = new Map();
     for (const item of room.queue) {
         const key = item.addedBy || 'Unknown';
         if (!userToItems.has(key)) userToItems.set(key, []);
         userToItems.get(key).push(item);
-        // Ensure participant exists and preserve join order priority
         upsertParticipant(room, key);
     }
 
@@ -136,11 +239,10 @@ function reorderQueueRoundRobin(room) {
     const newQueue = [];
     let remaining = room.queue.length;
     const n = totalParticipants;
-    let cursor = room.roundRobin.lastServedIdx; // the last who sang; next search starts after this index
+    let cursor = room.roundRobin.lastServedIdx;
 
     let safetyCounter = remaining + n + 100;
     while (remaining > 0 && safetyCounter-- > 0) {
-        // find next participant with available items scanning in join order priority
         let nextIdx = -1;
         for (let step = 1; step <= n; step++) {
             const idx = (cursor + step) % n;
@@ -152,16 +254,15 @@ function reorderQueueRoundRobin(room) {
             }
         }
 
-        if (nextIdx === -1) break; // no more items anywhere
+        if (nextIdx === -1) break;
 
         const nextUser = participantsSnapshot[nextIdx];
         const list = userToItems.get(nextUser);
         newQueue.push(list.shift());
         remaining--;
-        cursor = nextIdx; // serve nextUser and advance pivot
+        cursor = nextIdx;
     }
 
-    // Append any leftovers in join order, then any users not in participants (should not happen)
     for (const user of participantsSnapshot) {
         const items = userToItems.get(user) || [];
         while (items.length > 0) newQueue.push(items.shift());
@@ -176,13 +277,11 @@ function reorderQueueRoundRobin(room) {
 
 function setCurrentVideo(room, video) {
     room.currentVideo = video;
-    // Update playback videoId immediately
     room.playback.videoId = video ? video.id : null;
     room.playback.positionSec = 0;
     room.playback.updatedAt = Date.now();
     if (video && video.addedBy) {
         upsertParticipant(room, video.addedBy);
-        // Consider the current singer as the last served for round-robin fairness
         const idx = indexOfParticipant(room, video.addedBy);
         if (idx !== -1) {
             room.roundRobin.lastServedIdx = idx;
@@ -190,7 +289,7 @@ function setCurrentVideo(room, video) {
     }
 }
 
-// Cleanup old rooms every hour
+// ----- Cleanup -----
 setInterval(() => {
     const now = Date.now();
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -201,39 +300,55 @@ setInterval(() => {
             rooms.delete(roomId);
         }
     }
-}, 60 * 60 * 1000); // Run every hour
+}, 60 * 60 * 1000);
 
-// Generate QR code for a room
-async function generateRoomQR(roomId, origin) {
-    const frontendUrl = origin ? origin : `${config.frontend.ssl ? 'https' : 'http'}://${config.frontend.hostname}:${config.frontend.port}`;
-    const url = `${frontendUrl}/control/${roomId}`;
+// ----- QR Code Generation -----
+async function generateRoomQR(roomId, controlMasterKey) {
+    const url = `${PUBLIC_FRONTEND_ORIGIN}/control/${roomId}?token=${encodeURIComponent(controlMasterKey)}`;
     return await QRCode.toDataURL(url);
 }
 
+// ----- REST API Endpoints -----
+
 // Create a new room
-app.post('/api/rooms', async (req, res) => {
+app.post('/api/rooms', roomCreateLimiter, async (req, res) => {
     try {
         const roomId = uuidv4();
-        rooms.set(roomId, createEmptyRoom());
+        const room = createEmptyRoom();
+        rooms.set(roomId, room);
 
-        const qrCode = await generateRoomQR(roomId, req.headers.hostname);
+        const qrCode = await generateRoomQR(roomId, room.controlMasterKey);
         console.log(`[INFO] Created new room: ${roomId}`);
-        res.json({ roomId, qrCode });
+        
+        res.json({
+            roomId,
+            playerKey: room.playerKey,
+            controlMasterKey: room.controlMasterKey,
+            qrCode
+        });
     } catch (error) {
         console.error(`[ERR] Failed to create room: ${error.message}`);
         res.status(500).json({ error: 'Failed to create room' });
     }
 });
 
-// Get QR code for a room
+// Get QR code for a room (requires playerKey for admin)
 app.get('/api/rooms/:roomId/qr', async (req, res) => {
-    const origin = req.headers.hostname;
-    console.log('[INFO] QR Origin:', origin);
     try {
         const { roomId } = req.params;
-        ensureRoom(roomId);
-        console.log(`[INFO] Generating QR code for room ${roomId}`);
-        const qrCode = await generateRoomQR(roomId, origin);
+        const playerKey = req.headers.authorization?.replace('Bearer ', '');
+        
+        const room = rooms.get(roomId);
+        if (!room) {
+            return res.status(404).json({ error: 'Room not found' });
+        }
+
+        const auth = validatePlayerKey(room, playerKey);
+        if (!auth.valid) {
+            return res.status(401).json({ error: auth.error });
+        }
+
+        const qrCode = await generateRoomQR(roomId, room.controlMasterKey);
         res.json({ qrCode });
     } catch (error) {
         console.error(`[ERR] Failed to generate QR code: ${error.message}`);
@@ -241,24 +356,48 @@ app.get('/api/rooms/:roomId/qr', async (req, res) => {
     }
 });
 
-// Get room status
+// Get room status (public, no auth required for basic state)
 app.get('/api/rooms/:roomId', (req, res) => {
     const { roomId } = req.params;
-    // Ensure room exists
-    ensureRoom(roomId);
     const room = rooms.get(roomId);
+    
+    if (!room) {
+        return res.status(404).json({ error: 'Room not found' });
+    }
+    
     console.log(`[INFO] Retrieved room status: ${roomId}`);
     res.json(getPublicRoomState(room));
 });
 
-// Search YouTube videos
-app.get('/api/search', async (req, res) => {
+// Search YouTube videos (requires auth)
+app.get('/api/search', searchLimiter, async (req, res) => {
     const { query, pageToken } = req.query;
+    const authHeader = req.headers.authorization?.replace('Bearer ', '');
     const apiKey = process.env.YOUTUBE_API_KEY;
 
     if (!apiKey) {
         console.log('[ERR] YouTube API key not configured');
         return res.status(500).json({ error: 'YouTube API key not configured' });
+    }
+
+    // Validate auth - must be a valid controllerKey or controlMasterKey
+    let authorized = false;
+    for (const [, room] of rooms.entries()) {
+        if (room.controlMasterKey === authHeader) {
+            authorized = true;
+            break;
+        }
+        if (room.controllers.has(authHeader)) {
+            const controller = room.controllers.get(authHeader);
+            if (controller.enabled) {
+                authorized = true;
+                break;
+            }
+        }
+    }
+
+    if (!authorized) {
+        return res.status(401).json({ error: 'Unauthorized - valid controller key required' });
     }
 
     try {
@@ -278,7 +417,6 @@ app.get('/api/search', async (req, res) => {
             }
         );
 
-        // Filter and process the results
         const processedItems = response.data.items
             .filter(item => item.id.kind === 'youtube#video' || item.id.kind === 'youtube#playlist')
             .map(item => ({
@@ -299,32 +437,32 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-// Socket.IO connection handling
+// ----- Socket.IO Connection Handling -----
 io.on('connection', (socket) => {
     console.log(`[INFO] New socket connection: ${socket.id}`);
     let currentRoom = null;
+    let currentControllerKey = null;
 
+    // Join room (public, no auth required to view)
     socket.on('join-room', (payload) => {
-        const { roomId, username } = typeof payload === 'string' ? { roomId: payload } : (payload || {});
-        console.log(`[INFO] Socket ${socket.id} attempting to join room: ${roomId} as ${username || 'anonymous'}`);
+        const { roomId } = typeof payload === 'string' ? { roomId: payload } : (payload || {});
+        console.log(`[INFO] Socket ${socket.id} attempting to join room: ${roomId}`);
 
         try {
             if (!roomId || typeof roomId !== 'string') {
-                const error = 'Invalid room ID provided';
-                console.log(`[ERR] ${error} from socket ${socket.id}`);
-                socket.emit('error-message', { type: 'join-room', message: error });
+                socket.emit('error-message', { type: 'join-room', message: 'Invalid room ID provided' });
+                return;
+            }
+
+            const room = rooms.get(roomId);
+            if (!room) {
+                socket.emit('error-message', { type: 'join-room', message: 'Room not found' });
                 return;
             }
 
             currentRoom = roomId;
             socket.join(roomId);
             console.log(`[INFO] Socket ${socket.id} joined room: ${roomId}`);
-
-            const room = ensureRoom(roomId);
-            if (username && typeof username === 'string') {
-                upsertParticipant(room, username);
-            }
-            console.log(`[INFO] Sending room state to socket ${socket.id}:`, getPublicRoomState(room));
             socket.emit('room-state', getPublicRoomState(room));
         } catch (error) {
             console.log(`[ERR] Failed to join room ${roomId} for socket ${socket.id}:`, error.message);
@@ -332,78 +470,187 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Optional: allow updating username to track RR participants without rejoining
-    socket.on('identify', ({ roomId, username }) => {
-        try {
-            if (!roomId || typeof roomId !== 'string') return;
-            const room = rooms.get(roomId);
-            if (!room) return;
-            if (username && typeof username === 'string') {
-                upsertParticipant(room, username);
-            }
-        } catch (_) { }
-    });
-
-    socket.on('add-to-queue', ({ roomId, video }) => {
-        console.log(`[INFO] Received add-to-queue event from socket ${socket.id} for room ${roomId}:`, video);
-
-        try {
-            if (!roomId || !video) {
-                const error = 'Missing room ID or video data';
-                console.log(`[ERR] ${error} from socket ${socket.id}`);
-                socket.emit('error-message', { type: 'add-to-queue', message: error });
-                return;
-            }
-
-            if (!video.id || !video.title) {
-                const error = 'Invalid video data provided';
-                console.log(`[ERR] ${error} from socket ${socket.id}`);
-                socket.emit('error-message', { type: 'add-to-queue', message: error });
-                return;
-            }
-
-            const room = rooms.get(roomId);
-            if (room) {
-                // If this is the first video and no video is currently playing, set it as current
-                if (room.queue.length === 0 && !room.currentVideo) {
-                    console.log(`[INFO] Setting first video as current: ${video.title}`);
-                    setCurrentVideo(room, video);
-                    io.to(roomId).emit('video-changed', room.currentVideo);
-                } else {
-                    room.queue.push(video);
-                    // Maintain RR ordering if enabled
-                    reorderQueueRoundRobin(room);
-                    console.log(`[INFO] Added video "${video.title}" to queue`);
-                }
-                console.log(`[INFO] Current queue length: ${room.queue.length}`);
-                io.to(roomId).emit('queue-updated', room.queue);
-            } else {
-                const error = `Room ${roomId} not found`;
-                console.log(`[ERR] ${error} when adding video from socket ${socket.id}`);
-                socket.emit('error-message', { type: 'add-to-queue', message: error });
-            }
-        } catch (error) {
-            console.log(`[ERR] Failed to add video to queue for socket ${socket.id}:`, error.message);
-            socket.emit('error-message', { type: 'add-to-queue', message: 'Failed to add video to queue' });
-        }
-    });
-
-    socket.on('play-next', (roomId) => {
-        console.log(`[INFO] Received play-next event from socket ${socket.id} for room ${roomId}`);
+    // Join room as admin (with playerKey)
+    socket.on('join-room-admin', ({ roomId, playerKey }) => {
+        console.log(`[INFO] Socket ${socket.id} attempting admin join for room: ${roomId}`);
 
         try {
             if (!roomId || typeof roomId !== 'string') {
-                const error = 'Invalid room ID provided';
-                console.log(`[ERR] ${error} from socket ${socket.id}`);
-                socket.emit('error-message', { type: 'play-next', message: error });
+                socket.emit('error-message', { type: 'join-room-admin', message: 'Invalid room ID provided' });
                 return;
             }
 
             const room = rooms.get(roomId);
             if (!room) {
-                const error = `Room ${roomId} not found`;
-                console.log(`[ERR] ${error} when playing next from socket ${socket.id}`);
-                socket.emit('error-message', { type: 'play-next', message: error });
+                socket.emit('error-message', { type: 'join-room-admin', message: 'Room not found' });
+                return;
+            }
+
+            const auth = validatePlayerKey(room, playerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'join-room-admin', message: auth.error });
+                return;
+            }
+
+            currentRoom = roomId;
+            socket.join(roomId);
+            socket.join(`${roomId}:admin`); // Special admin room for admin-only events
+            console.log(`[INFO] Socket ${socket.id} joined room as admin: ${roomId}`);
+            socket.emit('room-state-admin', getAdminRoomState(room));
+        } catch (error) {
+            console.log(`[ERR] Failed admin join for room ${roomId}:`, error.message);
+            socket.emit('error-message', { type: 'join-room-admin', message: 'Failed to join room as admin' });
+        }
+    });
+
+    // Register a new controller (requires controlMasterKey)
+    socket.on('register-controller', ({ roomId, controlMasterKey, username }) => {
+        console.log(`[INFO] Socket ${socket.id} attempting to register controller for room: ${roomId}`);
+
+        try {
+            const room = rooms.get(roomId);
+            if (!room) {
+                socket.emit('error-message', { type: 'register-controller', message: 'Room not found' });
+                return;
+            }
+
+            const auth = validateControlMasterKey(room, controlMasterKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'register-controller', message: auth.error });
+                return;
+            }
+
+            if (!room.allowNewControllers) {
+                socket.emit('error-message', { type: 'register-controller', message: 'New controller registration is disabled for this room' });
+                return;
+            }
+
+            // Validate and sanitize username
+            const sanitized = sanitizeUsername(username);
+            if (!sanitized) {
+                socket.emit('error-message', { type: 'register-controller', message: 'Invalid username. Please provide a valid name without [ or ] characters.' });
+                return;
+            }
+
+            // Make unique name
+            const uniqueName = makeUniqueUsername(room, sanitized);
+
+            // Generate controller key
+            const controllerKey = generateSecureToken();
+            room.controllers.set(controllerKey, {
+                name: uniqueName,
+                enabled: true,
+                createdAt: Date.now(),
+            });
+
+            currentControllerKey = controllerKey;
+            currentRoom = roomId;
+            socket.join(roomId);
+
+            // Add to round-robin participants
+            upsertParticipant(room, uniqueName);
+
+            console.log(`[INFO] Registered controller "${uniqueName}" for room ${roomId}`);
+            socket.emit('controller-registered', { controllerKey, username: uniqueName });
+            // Send current room state to the newly registered controller
+            socket.emit('room-state', getPublicRoomState(room));
+
+            // Notify admin of new controller
+            io.to(`${roomId}:admin`).emit('controllers-updated', getAdminRoomState(room).controllers);
+        } catch (error) {
+            console.log(`[ERR] Failed to register controller:`, error.message);
+            socket.emit('error-message', { type: 'register-controller', message: 'Failed to register controller' });
+        }
+    });
+
+    // Authenticate with existing controller key
+    socket.on('auth-controller', ({ roomId, controllerKey }) => {
+        try {
+            const room = rooms.get(roomId);
+            if (!room) {
+                socket.emit('error-message', { type: 'auth-controller', message: 'Room not found' });
+                return;
+            }
+
+            const auth = validateControllerKey(room, controllerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'auth-controller', message: auth.error });
+                return;
+            }
+
+            currentControllerKey = controllerKey;
+            currentRoom = roomId;
+            socket.join(roomId);
+
+            console.log(`[INFO] Controller "${auth.controller.name}" authenticated for room ${roomId}`);
+            socket.emit('controller-authenticated', { username: auth.controller.name });
+            socket.emit('room-state', getPublicRoomState(room));
+        } catch (error) {
+            console.log(`[ERR] Failed to authenticate controller:`, error.message);
+            socket.emit('error-message', { type: 'auth-controller', message: 'Authentication failed' });
+        }
+    });
+
+    // Add to queue (requires controllerKey)
+    socket.on('add-to-queue', ({ roomId, video, controllerKey }) => {
+        console.log(`[INFO] Received add-to-queue event from socket ${socket.id} for room ${roomId}`);
+
+        try {
+            const room = rooms.get(roomId);
+            if (!room) {
+                socket.emit('error-message', { type: 'add-to-queue', message: 'Room not found' });
+                return;
+            }
+
+            const auth = validateControllerKey(room, controllerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'add-to-queue', message: auth.error });
+                return;
+            }
+
+            if (!video || !video.id || !video.title) {
+                socket.emit('error-message', { type: 'add-to-queue', message: 'Invalid video data provided' });
+                return;
+            }
+
+            // Use the controller's registered name
+            const videoData = {
+                ...video,
+                addedBy: auth.controller.name,
+            };
+
+            if (room.queue.length === 0 && !room.currentVideo) {
+                console.log(`[INFO] Setting first video as current: ${video.title}`);
+                setCurrentVideo(room, videoData);
+                io.to(roomId).emit('video-changed', room.currentVideo);
+            } else {
+                room.queue.push(videoData);
+                reorderQueueRoundRobin(room);
+                console.log(`[INFO] Added video "${video.title}" to queue by ${auth.controller.name}`);
+            }
+            
+            console.log(`[INFO] Current queue length: ${room.queue.length}`);
+            io.to(roomId).emit('queue-updated', room.queue);
+        } catch (error) {
+            console.log(`[ERR] Failed to add video to queue:`, error.message);
+            socket.emit('error-message', { type: 'add-to-queue', message: 'Failed to add video to queue' });
+        }
+    });
+
+    // Play next (requires controllerKey)
+    socket.on('play-next', ({ roomId, controllerKey }) => {
+        console.log(`[INFO] Received play-next event from socket ${socket.id} for room ${roomId}`);
+
+        try {
+            const room = rooms.get(roomId);
+            if (!room) {
+                socket.emit('error-message', { type: 'play-next', message: 'Room not found' });
+                return;
+            }
+
+            const auth = validateControllerKey(room, controllerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'play-next', message: auth.error });
                 return;
             }
 
@@ -413,14 +660,6 @@ io.on('connection', (socket) => {
                 console.log(`[INFO] Playing next video "${room.currentVideo.title}" in room ${roomId}`);
                 io.to(roomId).emit('video-changed', room.currentVideo);
                 io.to(roomId).emit('queue-updated', room.queue);
-
-                // Update round-robin lastServedIdx to the user who just played, if enabled
-                if (room.settings.roundRobinEnabled && room.currentVideo && room.currentVideo.addedBy) {
-                    const idx = indexOfParticipant(room, room.currentVideo.addedBy);
-                    if (idx !== -1) {
-                        room.roundRobin.lastServedIdx = idx;
-                    }
-                }
             } else {
                 console.log(`[INFO] No videos in queue for room ${roomId}`);
                 if (room.currentVideo) {
@@ -430,41 +669,81 @@ io.on('connection', (socket) => {
                 io.to(roomId).emit('queue-updated', []);
             }
         } catch (error) {
-            console.log(`[ERR] Failed to play next video for socket ${socket.id}:`, error.message);
+            console.log(`[ERR] Failed to play next video:`, error.message);
             socket.emit('error-message', { type: 'play-next', message: 'Failed to skip to next video' });
         }
     });
 
-    socket.on('remove-from-queue', ({ roomId, index }) => {
-        console.log(`[INFO] Received remove-from-queue event from socket ${socket.id} for room ${roomId}, index: ${index}`);
+    // Play next from player (requires playerKey) - used for auto-advance
+    socket.on('player-play-next', ({ roomId, playerKey }) => {
+        console.log(`[INFO] Received player-play-next event from socket ${socket.id} for room ${roomId}`);
 
         try {
-            if (!roomId || typeof roomId !== 'string') {
-                const error = 'Invalid room ID provided';
-                console.log(`[ERR] ${error} from socket ${socket.id}`);
-                socket.emit('error-message', { type: 'remove-from-queue', message: error });
-                return;
-            }
-
-            if (typeof index !== 'number' || index < 0) {
-                const error = 'Invalid queue index provided';
-                console.log(`[ERR] ${error} from socket ${socket.id}`);
-                socket.emit('error-message', { type: 'remove-from-queue', message: error });
-                return;
-            }
-
             const room = rooms.get(roomId);
             if (!room) {
-                const error = `Room ${roomId} not found`;
-                console.log(`[ERR] ${error} when removing from queue from socket ${socket.id}`);
-                socket.emit('error-message', { type: 'remove-from-queue', message: error });
+                socket.emit('error-message', { type: 'player-play-next', message: 'Room not found' });
                 return;
             }
 
-            if (room.queue.length <= index) {
-                const error = `Invalid queue index ${index} (queue has ${room.queue.length} items)`;
-                console.log(`[ERR] ${error} for room ${roomId} from socket ${socket.id}`);
-                socket.emit('error-message', { type: 'remove-from-queue', message: 'Video not found in queue' });
+            const auth = validatePlayerKey(room, playerKey);
+            if (!auth.valid) {
+                // Silently ignore invalid player key for auto-advance
+                return;
+            }
+
+            if (room.queue.length > 0) {
+                const nextVideo = room.queue.shift();
+                setCurrentVideo(room, nextVideo);
+                console.log(`[INFO] Auto-advancing to next video "${room.currentVideo.title}" in room ${roomId}`);
+                io.to(roomId).emit('video-changed', room.currentVideo);
+                io.to(roomId).emit('queue-updated', room.queue);
+            } else {
+                console.log(`[INFO] No videos in queue for auto-advance in room ${roomId}`);
+                if (room.currentVideo) {
+                    setCurrentVideo(room, null);
+                    io.to(roomId).emit('video-changed', null);
+                }
+                io.to(roomId).emit('queue-updated', []);
+            }
+        } catch (error) {
+            console.log(`[ERR] Failed to auto-advance video:`, error.message);
+        }
+    });
+
+    // Request current room state (for controllers that need to refresh)
+    socket.on('request-room-state', ({ roomId }) => {
+        try {
+            const room = rooms.get(roomId);
+            if (!room) return;
+            
+            // Only send if socket is in the room
+            if (currentRoom === roomId) {
+                socket.emit('room-state', getPublicRoomState(room));
+            }
+        } catch (error) {
+            console.log(`[ERR] Failed to send room state:`, error.message);
+        }
+    });
+
+    // Remove from queue (requires controllerKey)
+    socket.on('remove-from-queue', ({ roomId, index, controllerKey }) => {
+        console.log(`[INFO] Received remove-from-queue event for room ${roomId}, index: ${index}`);
+
+        try {
+            const room = rooms.get(roomId);
+            if (!room) {
+                socket.emit('error-message', { type: 'remove-from-queue', message: 'Room not found' });
+                return;
+            }
+
+            const auth = validateControllerKey(room, controllerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'remove-from-queue', message: auth.error });
+                return;
+            }
+
+            if (typeof index !== 'number' || index < 0 || room.queue.length <= index) {
+                socket.emit('error-message', { type: 'remove-from-queue', message: 'Invalid queue index' });
                 return;
             }
 
@@ -475,62 +754,149 @@ io.on('connection', (socket) => {
             console.log(`[INFO] Removed video "${removedVideo.title}" from queue`);
             io.to(roomId).emit('queue-updated', room.queue);
         } catch (error) {
-            console.log(`[ERR] Failed to remove video from queue for socket ${socket.id}:`, error.message);
+            console.log(`[ERR] Failed to remove video from queue:`, error.message);
             socket.emit('error-message', { type: 'remove-from-queue', message: 'Failed to remove video from queue' });
         }
     });
 
-    // Optional room leave support
-    socket.on('leave-room', (roomId) => {
+    // Update settings (requires controllerKey)
+    socket.on('update-settings', ({ roomId, settings, controllerKey }) => {
         try {
-            if (!roomId || typeof roomId !== 'string') return;
-            socket.leave(roomId);
-            if (currentRoom === roomId) currentRoom = null;
-            console.log(`[INFO] Socket ${socket.id} left room: ${roomId}`);
-        } catch (err) {
-            console.log(`[ERR] Failed to leave room ${roomId} for socket ${socket.id}:`, err.message);
+            const room = rooms.get(roomId);
+            if (!room) return;
+
+            const auth = validateControllerKey(room, controllerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'update-settings', message: auth.error });
+                return;
+            }
+
+            if (settings && typeof settings.roundRobinEnabled === 'boolean') {
+                room.settings.roundRobinEnabled = settings.roundRobinEnabled;
+                reorderQueueRoundRobin(room);
+                io.to(roomId).emit('queue-updated', room.queue);
+            }
+            io.to(roomId).emit('settings-updated', room.settings);
+        } catch (error) {
+            console.log(`[ERR] Failed to update settings:`, error.message);
         }
     });
 
-    // Update live playback status from Room player and broadcast to control UIs
-    socket.on('playback-state', ({ roomId, state, positionSec, durationSec, videoId }) => {
+    // Playback state update (requires playerKey)
+    socket.on('playback-state', ({ roomId, playerKey, state, positionSec, durationSec, videoId }) => {
         try {
-            if (!roomId || typeof roomId !== 'string') return;
             const room = rooms.get(roomId);
             if (!room) return;
+
+            const auth = validatePlayerKey(room, playerKey);
+            if (!auth.valid) {
+                // Silently ignore - don't spam errors for playback updates
+                return;
+            }
+
             if (state) room.playback.state = state;
             if (typeof positionSec === 'number') room.playback.positionSec = positionSec;
             if (typeof durationSec === 'number') room.playback.durationSec = durationSec;
             if (typeof videoId === 'string' || videoId === null) room.playback.videoId = videoId;
             room.playback.updatedAt = Date.now();
             io.to(roomId).emit('playback-updated', room.playback);
-        } catch (err) {
-            console.log(`[ERR] Failed to process playback-state from ${socket.id}:`, err.message);
+        } catch (error) {
+            console.log(`[ERR] Failed to process playback-state:`, error.message);
         }
     });
 
-    // Toggle room settings, currently only round-robin flag
-    socket.on('update-settings', ({ roomId, settings }) => {
+    // ----- Admin Actions (require playerKey) -----
+
+    // Toggle controller enabled/disabled
+    socket.on('admin-toggle-controller', ({ roomId, playerKey, controllerId, enabled }) => {
         try {
-            if (!roomId || typeof roomId !== 'string') return;
             const room = rooms.get(roomId);
             if (!room) return;
-            if (settings && typeof settings.roundRobinEnabled === 'boolean') {
-                room.settings.roundRobinEnabled = settings.roundRobinEnabled;
-                // Recompute order on toggle
-                reorderQueueRoundRobin(room);
-                io.to(roomId).emit('queue-updated', room.queue);
+
+            const auth = validatePlayerKey(room, playerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'admin-toggle-controller', message: auth.error });
+                return;
             }
-            io.to(roomId).emit('settings-updated', room.settings);
-        } catch (err) {
-            console.log(`[ERR] Failed to update settings for room ${roomId}:`, err.message);
+
+            // Find controller by partial key (id is first 8 chars)
+            for (const [key, controller] of room.controllers.entries()) {
+                if (key.substring(0, 8) === controllerId) {
+                    controller.enabled = enabled;
+                    console.log(`[INFO] Controller "${controller.name}" ${enabled ? 'enabled' : 'disabled'}`);
+                    io.to(`${roomId}:admin`).emit('controllers-updated', getAdminRoomState(room).controllers);
+                    return;
+                }
+            }
+            socket.emit('error-message', { type: 'admin-toggle-controller', message: 'Controller not found' });
+        } catch (error) {
+            console.log(`[ERR] Failed to toggle controller:`, error.message);
+        }
+    });
+
+    // Remove controller
+    socket.on('admin-remove-controller', ({ roomId, playerKey, controllerId }) => {
+        try {
+            const room = rooms.get(roomId);
+            if (!room) return;
+
+            const auth = validatePlayerKey(room, playerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'admin-remove-controller', message: auth.error });
+                return;
+            }
+
+            for (const [key, controller] of room.controllers.entries()) {
+                if (key.substring(0, 8) === controllerId) {
+                    room.controllers.delete(key);
+                    console.log(`[INFO] Controller "${controller.name}" removed`);
+                    io.to(`${roomId}:admin`).emit('controllers-updated', getAdminRoomState(room).controllers);
+                    return;
+                }
+            }
+            socket.emit('error-message', { type: 'admin-remove-controller', message: 'Controller not found' });
+        } catch (error) {
+            console.log(`[ERR] Failed to remove controller:`, error.message);
+        }
+    });
+
+    // Toggle allow new controllers
+    socket.on('admin-toggle-registration', ({ roomId, playerKey, allow }) => {
+        try {
+            const room = rooms.get(roomId);
+            if (!room) return;
+
+            const auth = validatePlayerKey(room, playerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'admin-toggle-registration', message: auth.error });
+                return;
+            }
+
+            room.allowNewControllers = allow;
+            console.log(`[INFO] Room ${roomId} registration ${allow ? 'enabled' : 'disabled'}`);
+            io.to(roomId).emit('registration-status', { allowNewControllers: allow });
+            io.to(`${roomId}:admin`).emit('controllers-updated', getAdminRoomState(room).controllers);
+        } catch (error) {
+            console.log(`[ERR] Failed to toggle registration:`, error.message);
+        }
+    });
+
+    // Leave room
+    socket.on('leave-room', (roomId) => {
+        try {
+            if (!roomId || typeof roomId !== 'string') return;
+            socket.leave(roomId);
+            socket.leave(`${roomId}:admin`);
+            if (currentRoom === roomId) currentRoom = null;
+            console.log(`[INFO] Socket ${socket.id} left room: ${roomId}`);
+        } catch (error) {
+            console.log(`[ERR] Failed to leave room:`, error.message);
         }
     });
 
     socket.on('disconnect', () => {
         if (currentRoom) {
             console.log(`[INFO] Socket ${socket.id} disconnected from room: ${currentRoom}`);
-            socket.leave(currentRoom);
         }
     });
 
@@ -539,7 +905,7 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = Number(process.env.PORT) || config.backend.port;
 server.listen(PORT, () => {
     console.log(`[INFO] Server running on port ${PORT}`);
+    console.log(`[INFO] Socket.IO path: ${NODE_ENV === 'production' ? '/ws/' : '/socket.io/'}`);
 });

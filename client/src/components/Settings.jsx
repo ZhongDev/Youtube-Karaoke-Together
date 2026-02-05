@@ -7,23 +7,27 @@ import {
   Button,
   FormControlLabel,
   Checkbox,
+  Alert,
 } from "@mui/material";
 import SettingsIcon from "@mui/icons-material/Settings";
+import { useParams } from "react-router-dom";
+import { STORAGE_KEYS, getStoredControllerKey, removeControllerKey } from "../config";
 
 const Settings = () => {
+  const { roomId } = useParams();
   const [username, setUsername] = useState(() => {
-    const savedUsername = localStorage.getItem("karaokeUsername");
-    return savedUsername || "";
+    return localStorage.getItem(STORAGE_KEYS.USERNAME) || "";
   });
   const [rememberMe, setRememberMe] = useState(() => {
-    const rememberMeValue = localStorage.getItem("karaokeRememberMe");
-    return rememberMeValue === "true";
+    return localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) === "true";
   });
+  const [saved, setSaved] = useState(false);
+  const hasControllerKey = !!getStoredControllerKey(roomId);
 
   // Listen for changes to localStorage
   useEffect(() => {
     const handleStorageChange = () => {
-      const savedUsername = localStorage.getItem("karaokeUsername");
+      const savedUsername = localStorage.getItem(STORAGE_KEYS.USERNAME);
       if (savedUsername !== username) {
         setUsername(savedUsername || "");
       }
@@ -36,35 +40,32 @@ const Settings = () => {
   const handleSave = () => {
     if (username.trim()) {
       if (rememberMe) {
-        // Save username and remember preference
-        localStorage.setItem("karaokeUsername", username);
-        localStorage.setItem("karaokeRememberMe", "true");
+        localStorage.setItem(STORAGE_KEYS.USERNAME, username);
+        localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "true");
       } else {
-        // Don't save username to localStorage, just set remember preference to false
-        // This ensures username is cleared on page refresh
-        localStorage.setItem("karaokeRememberMe", "false");
-        // But temporarily set it for current session notification
-        localStorage.setItem("karaokeUsername", username);
+        localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "false");
+        localStorage.setItem(STORAGE_KEYS.USERNAME, username);
       }
 
       // Trigger a storage event to notify other components
       window.dispatchEvent(
         new StorageEvent("storage", {
-          key: "karaokeUsername",
+          key: STORAGE_KEYS.USERNAME,
           newValue: username,
-          oldValue: localStorage.getItem("karaokeUsername"),
+          oldValue: localStorage.getItem(STORAGE_KEYS.USERNAME),
         })
       );
 
-      // Notify server of identity for RR participation if in a room context
-      try {
-        const roomId =
-          window.location.pathname.split("/control/")[1] ||
-          window.location.pathname.split("/room/")[1];
-        if (roomId && window.ytktSocket && window.ytktSocket.connected) {
-          window.ytktSocket.emit("identify", { roomId, username });
-        }
-      } catch (_) {}
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    }
+  };
+
+  const handleClearSession = () => {
+    if (roomId) {
+      removeControllerKey(roomId);
+      // Force page refresh to re-register
+      window.location.reload();
     }
   };
 
@@ -87,14 +88,33 @@ const Settings = () => {
           </Typography>
         </Box>
 
+        {saved && (
+          <Alert
+            severity="success"
+            sx={{
+              mb: 3,
+              background: "rgba(16, 185, 129, 0.1)",
+              border: "1px solid rgba(16, 185, 129, 0.2)",
+            }}
+          >
+            Settings saved successfully!
+          </Alert>
+        )}
+
         <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          <TextField
-            fullWidth
-            label="Your Name"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="Enter your display name"
-          />
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 1, color: "text.secondary" }}>
+              Display Name
+            </Typography>
+            <TextField
+              fullWidth
+              label="Your Name"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Enter your display name"
+              helperText="This name will be saved for future sessions if 'Remember me' is checked"
+            />
+          </Box>
 
           <FormControlLabel
             control={
@@ -128,6 +148,66 @@ const Settings = () => {
           >
             Save Settings
           </Button>
+
+          {/* Session Management */}
+          <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid rgba(148, 163, 184, 0.1)" }}>
+            <Typography variant="subtitle2" sx={{ mb: 2, color: "text.secondary" }}>
+              Session Management
+            </Typography>
+            
+            {hasControllerKey ? (
+              <Box
+                sx={{
+                  p: 2,
+                  background: "rgba(16, 185, 129, 0.1)",
+                  border: "1px solid rgba(16, 185, 129, 0.2)",
+                  borderRadius: 2,
+                  mb: 2,
+                }}
+              >
+                <Typography variant="body2" sx={{ color: "#10B981" }}>
+                  You are registered for this room session.
+                </Typography>
+              </Box>
+            ) : (
+              <Box
+                sx={{
+                  p: 2,
+                  background: "rgba(245, 158, 11, 0.1)",
+                  border: "1px solid rgba(245, 158, 11, 0.2)",
+                  borderRadius: 2,
+                  mb: 2,
+                }}
+              >
+                <Typography variant="body2" sx={{ color: "#F59E0B" }}>
+                  You are not registered for this room. Scan the QR code to register.
+                </Typography>
+              </Box>
+            )}
+
+            <Button
+              variant="outlined"
+              onClick={handleClearSession}
+              disabled={!hasControllerKey}
+              sx={{
+                borderColor: "rgba(239, 68, 68, 0.5)",
+                color: "#EF4444",
+                "&:hover": {
+                  borderColor: "#EF4444",
+                  background: "rgba(239, 68, 68, 0.1)",
+                },
+                "&:disabled": {
+                  borderColor: "rgba(148, 163, 184, 0.2)",
+                  color: "rgba(148, 163, 184, 0.5)",
+                },
+              }}
+            >
+              Clear Session & Re-register
+            </Button>
+            <Typography variant="caption" sx={{ display: "block", mt: 1, color: "text.secondary" }}>
+              This will clear your current session and require you to scan the QR code again.
+            </Typography>
+          </Box>
         </Box>
       </Paper>
     </Box>

@@ -24,7 +24,7 @@ import {
 import { useParams } from "react-router-dom";
 import useSocket from "../hooks/useSocket";
 
-const Queue = () => {
+const Queue = ({ controllerKey }) => {
   const { roomId } = useParams();
   const [queue, setQueue] = useState([]);
   const [currentVideo, setCurrentVideo] = useState(null);
@@ -49,10 +49,9 @@ const Queue = () => {
     connectionError,
     serverError,
     clearServerError,
-    joinRoom,
   } = useSocket();
 
-  // Handle socket connection and room joining
+  // Handle socket connection and listen for room updates
   useEffect(() => {
     if (!roomId) {
       console.error("[ERR] No roomId provided");
@@ -63,14 +62,8 @@ const Queue = () => {
 
     if (!socket) return;
 
-    // Join room when connected
-    if (isConnected) {
-      const username = localStorage.getItem("karaokeUsername") || "";
-      joinRoom(roomId, username);
-    }
-
     const handleRoomState = (room) => {
-      console.log("[INFO] Received room state:", room);
+      console.log("[INFO] Queue received room state:", room);
       setQueue(room.queue || []);
       setCurrentVideo(room.currentVideo);
       setPlayback(room.playback || null);
@@ -98,6 +91,11 @@ const Queue = () => {
     socket.on("video-changed", handleVideoChanged);
     socket.on("playback-updated", handlePlaybackUpdated);
 
+    // Request current room state when Queue mounts (it may have been emitted before Queue was mounted)
+    if (isConnected) {
+      socket.emit("request-room-state", { roomId });
+    }
+
     return () => {
       socket.off("room-state", handleRoomState);
       socket.off("queue-updated", handleQueueUpdated);
@@ -105,7 +103,7 @@ const Queue = () => {
       socket.off("settings-updated", handleSettingsUpdated);
       socket.off("playback-updated", handlePlaybackUpdated);
     };
-  }, [roomId, socket, isConnected, joinRoom]);
+  }, [roomId, socket, isConnected]);
 
   // Show server error notifications
   useEffect(() => {
@@ -125,10 +123,20 @@ const Queue = () => {
   };
 
   const handleDeleteConfirm = () => {
-    if (videoToDelete) {
-      socket.emit("remove-from-queue", { roomId, index: videoToDelete.index });
+    if (videoToDelete && controllerKey) {
+      socket.emit("remove-from-queue", {
+        roomId,
+        index: videoToDelete.index,
+        controllerKey,
+      });
       setDeleteDialogOpen(false);
       setVideoToDelete(null);
+    } else if (!controllerKey) {
+      setNotification({
+        open: true,
+        message: "Not authenticated. Please refresh the page.",
+        severity: "error",
+      });
     }
   };
 
@@ -142,8 +150,16 @@ const Queue = () => {
   };
 
   const handleSkipConfirm = () => {
-    socket.emit("play-next", roomId);
-    setSkipDialogOpen(false);
+    if (controllerKey) {
+      socket.emit("play-next", { roomId, controllerKey });
+      setSkipDialogOpen(false);
+    } else {
+      setNotification({
+        open: true,
+        message: "Not authenticated. Please refresh the page.",
+        severity: "error",
+      });
+    }
   };
 
   const handleSkipCancel = () => {
@@ -236,7 +252,7 @@ const Queue = () => {
       {/* Action Button */}
       <IconButton
         onClick={onAction}
-        disabled={!isConnected}
+        disabled={!isConnected || !controllerKey}
         sx={{
           flexShrink: 0,
           color: actionColor,
@@ -289,6 +305,17 @@ const Queue = () => {
               sx={{
                 background: "rgba(239, 68, 68, 0.15)",
                 color: "#EF4444",
+                fontWeight: 500,
+              }}
+            />
+          )}
+          {!controllerKey && (
+            <Chip
+              label="Not Authenticated"
+              size="small"
+              sx={{
+                background: "rgba(245, 158, 11, 0.15)",
+                color: "#F59E0B",
                 fontWeight: 500,
               }}
             />

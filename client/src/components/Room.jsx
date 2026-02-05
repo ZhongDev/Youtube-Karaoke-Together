@@ -7,58 +7,51 @@ import {
   Typography,
   IconButton,
   Modal,
-  TextField,
   Button,
   Alert,
   Snackbar,
+  Switch,
+  FormControlLabel,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemSecondaryAction,
 } from "@mui/material";
 import YouTube from "react-youtube";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import SettingsIcon from "@mui/icons-material/Settings";
 import SignalWifiOffIcon from "@mui/icons-material/SignalWifiOff";
 import QueueMusicIcon from "@mui/icons-material/QueueMusic";
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import FullscreenExitIcon from "@mui/icons-material/FullscreenExit";
+import DeleteIcon from "@mui/icons-material/Delete";
+import BlockIcon from "@mui/icons-material/Block";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import Tooltip from "@mui/material/Tooltip";
 import useSocket from "../hooks/useSocket";
-import config from "../ytkt-config.json";
-
-// Get the initial backend URL from config
-const getInitialBackendUrl = () => {
-  const host =
-    localStorage.getItem("backendHost") ||
-    `${config.backend.ssl ? "https" : "http"}://${config.backend.hostname}`;
-  const port = localStorage.getItem("backendPort") || `${config.backend.port}`;
-  return `${host}:${port}`;
-};
-
-const getInitialBackendHost = () => {
-  return (
-    localStorage.getItem("backendHost") ||
-    `${config.backend.ssl ? "https" : "http"}://${config.backend.hostname}`
-  );
-};
-
-const getInitialFrontendPort = () => {
-  return localStorage.getItem("frontendPort") || config.frontend.port;
-};
-
-const getInitialBackendPort = () => {
-  return localStorage.getItem("backendPort") || config.backend.port;
-};
+import { getBackendUrl, getStoredPlayerKey, storePlayerKey } from "../config";
 
 const Room = () => {
   const { roomId } = useParams();
+  const [searchParams] = useSearchParams();
   const playerRef = useRef(null);
   const lastVideoIdRef = useRef(null);
   const roomContainerRef = useRef(null);
 
+  // Get playerKey from URL or localStorage
+  const urlPlayerKey = searchParams.get('key');
+  const storedPlayerKey = getStoredPlayerKey(roomId);
+  const playerKey = urlPlayerKey || storedPlayerKey;
+
+  // Store playerKey if it came from URL
+  useEffect(() => {
+    if (urlPlayerKey && roomId) {
+      storePlayerKey(roomId, urlPlayerKey);
+    }
+  }, [urlPlayerKey, roomId]);
+
   const [qrCode, setQrCode] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [backendUrl, setBackendUrl] = useState(getInitialBackendUrl());
-  const [backendHost, setBackendHost] = useState(getInitialBackendHost());
-  const [backendPort, setBackendPort] = useState(getInitialBackendPort());
-  const [frontendPort, setFrontendPort] = useState(getInitialFrontendPort());
   const [currentVideo, setCurrentVideo] = useState(null);
   const [initalStartSeconds, setInitalStartSeconds] = useState(null);
   const [queue, setQueue] = useState([]);
@@ -74,16 +67,18 @@ const Room = () => {
     roundRobinEnabled: false,
   });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [controllers, setControllers] = useState([]);
+  const [allowNewControllers, setAllowNewControllers] = useState(true);
 
-  // Use the new socket hook
+  // Use the socket hook
   const {
     socket,
     isConnected,
     connectionError,
     serverError,
     clearServerError,
-    joinRoom,
-  } = useSocket(backendUrl);
+    joinRoomAdmin,
+  } = useSocket();
 
   // Compute resume position based on playback snapshot
   const computeStartSeconds = useCallback(
@@ -103,33 +98,8 @@ const Room = () => {
     [playback]
   );
 
-  // Save backend URL to localStorage when it changes
-  useEffect(() => {
-    localStorage.setItem("backendHost", backendHost);
-  }, [backendHost]);
-
-  useEffect(() => {
-    localStorage.setItem("backendPort", backendPort);
-  }, [backendPort]);
-
-  useEffect(() => {
-    localStorage.setItem("frontendPort", frontendPort);
-  }, [frontendPort]);
-
   const handleSettingsOpen = () => setSettingsOpen(true);
   const handleSettingsClose = () => setSettingsOpen(false);
-
-  const handleBackendHostChange = (event) => {
-    setBackendHost(event.target.value);
-  };
-
-  const handleBackendPortChange = (event) => {
-    setBackendPort(event.target.value);
-  };
-
-  const handleFrontendPortChange = (event) => {
-    setFrontendPort(event.target.value);
-  };
 
   // Fullscreen handlers
   const enterFullscreen = useCallback(async () => {
@@ -186,16 +156,20 @@ const Room = () => {
     };
   }, []);
 
-  // Update the fetchQRCode function to include roomId in its dependencies
+  // Fetch QR code (requires playerKey)
   const fetchQRCode = useCallback(async () => {
-    const API_URL = backendUrl;
-    console.log("[INFO] API_URL:", API_URL);
+    if (!playerKey) {
+      console.log("[WARN] No playerKey available for QR fetch");
+      return;
+    }
+
+    const backendUrl = getBackendUrl();
     try {
-      const response = await fetch(`${API_URL}/api/rooms/${roomId}/qr`, {
+      const response = await fetch(`${backendUrl}/api/rooms/${roomId}/qr`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
-          hostname: `${backendHost}:${frontendPort}`,
+          "Authorization": `Bearer ${playerKey}`,
         },
       });
 
@@ -208,31 +182,31 @@ const Room = () => {
       console.log("[INFO] QR code fetched successfully");
     } catch (error) {
       console.error("[ERR] Failed to fetch QR code:", error);
-      // Show user-friendly error message
       setQrCode(null);
     }
-  }, [backendUrl, roomId, backendHost, frontendPort]);
+  }, [roomId, playerKey]);
 
-  const handleSaveSettings = () => {
-    const fullBackendUrl = `${backendHost}:${backendPort}`;
-    setBackendUrl(fullBackendUrl);
-    handleSettingsClose();
-    // Socket will be recreated due to the useEffect dependency on backendUrl
-    // Explicitly fetch new QR code after URL change
-    fetchQRCode();
-  };
-
-  // Add effect to refetch QR code when backend URL changes
+  // Fetch QR code on mount and when playerKey becomes available
   useEffect(() => {
-    if (roomId) {
+    if (roomId && playerKey) {
       fetchQRCode();
     }
-  }, [roomId, fetchQRCode]);
+  }, [roomId, playerKey, fetchQRCode]);
 
-  // Handle socket connection and room joining
+  // Handle socket connection and room joining as admin
   useEffect(() => {
     if (!roomId) {
       console.error("[ERR] No roomId provided");
+      return;
+    }
+
+    if (!playerKey) {
+      console.error("[ERR] No playerKey available");
+      setNotification({
+        open: true,
+        message: "Missing player key. Please create a new room from the home page.",
+        severity: "error",
+      });
       return;
     }
 
@@ -240,10 +214,21 @@ const Room = () => {
 
     if (!socket) return;
 
-    // Join room when connected
+    // Join room as admin when connected
     if (isConnected) {
-      joinRoom(roomId);
+      joinRoomAdmin(roomId, playerKey);
     }
+
+    const handleRoomStateAdmin = (room) => {
+      console.log("[INFO] Received admin room state:", room);
+      setCurrentVideo(room.currentVideo);
+      setQueue(room.queue || []);
+      setPlayback(room.playback || null);
+      setSettingsState(room.settings || { roundRobinEnabled: false });
+      setControllers(room.controllers || []);
+      setAllowNewControllers(room.allowNewControllers !== false);
+      setIsLoading(false);
+    };
 
     const handleRoomState = (room) => {
       console.log("[INFO] Received room state:", room);
@@ -251,21 +236,8 @@ const Room = () => {
       setQueue(room.queue || []);
       setPlayback(room.playback || null);
       setSettingsState(room.settings || { roundRobinEnabled: false });
+      setAllowNewControllers(room.allowNewControllers !== false);
       setIsLoading(false);
-
-      if (room.currentVideo && playerRef.current) {
-        const incomingId = room.currentVideo.id;
-        const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
-        if (!alreadyLoadedSameVideo) {
-          const startSeconds = computeStartSeconds(incomingId);
-          playerRef.current.loadVideoById({
-            videoId: incomingId,
-            startSeconds,
-          });
-          playerRef.current.playVideo();
-          lastVideoIdRef.current = incomingId;
-        }
-      }
     };
 
     const handleVideoChanged = (video) => {
@@ -278,20 +250,8 @@ const Room = () => {
           playerRef.current.clearVideo();
         }
         lastVideoIdRef.current = null;
-      } else if (playerRef.current) {
-        const incomingId = video.id;
-        const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
-        if (!alreadyLoadedSameVideo) {
-          console.log("[INFO] Loading new video in player");
-          const startSeconds = computeStartSeconds(incomingId);
-          playerRef.current.loadVideoById({
-            videoId: incomingId,
-            startSeconds,
-          });
-          playerRef.current.playVideo();
-          lastVideoIdRef.current = incomingId;
-        }
       }
+      // Note: actual video loading is handled by the separate useEffect that watches currentVideo
     };
 
     const handleQueueUpdated = (newQueue) => {
@@ -299,6 +259,16 @@ const Room = () => {
       setQueue(newQueue);
     };
 
+    const handleControllersUpdated = (newControllers) => {
+      console.log("[INFO] Controllers updated:", newControllers);
+      setControllers(newControllers);
+    };
+
+    const handleRegistrationStatus = ({ allowNewControllers: allow }) => {
+      setAllowNewControllers(allow);
+    };
+
+    socket.on("room-state-admin", handleRoomStateAdmin);
     socket.on("room-state", handleRoomState);
     socket.on("video-changed", handleVideoChanged);
     socket.on("queue-updated", handleQueueUpdated);
@@ -306,15 +276,20 @@ const Room = () => {
     socket.on("settings-updated", (settings) =>
       setSettingsState(settings || { roundRobinEnabled: false })
     );
+    socket.on("controllers-updated", handleControllersUpdated);
+    socket.on("registration-status", handleRegistrationStatus);
 
     return () => {
+      socket.off("room-state-admin", handleRoomStateAdmin);
       socket.off("room-state", handleRoomState);
       socket.off("video-changed", handleVideoChanged);
       socket.off("queue-updated", handleQueueUpdated);
       socket.off("playback-updated");
       socket.off("settings-updated");
+      socket.off("controllers-updated", handleControllersUpdated);
+      socket.off("registration-status", handleRegistrationStatus);
     };
-  }, [roomId, socket, isConnected, joinRoom, currentVideo]);
+  }, [roomId, socket, isConnected, joinRoomAdmin, playerKey]);
 
   // Show server error notifications
   useEffect(() => {
@@ -324,7 +299,6 @@ const Room = () => {
         message: `Server Error: ${serverError.message}`,
         severity: "error",
       });
-      // Clear the server error after showing notification
       clearServerError();
     }
   }, [serverError, clearServerError]);
@@ -333,7 +307,6 @@ const Room = () => {
     console.log("[INFO] Player ready");
     playerRef.current = event.target;
     setIsPlayerReady(true);
-    // If there is a currentVideo known from server state, ensure it is loaded immediately
     try {
       const incomingId = currentVideo?.id;
       const startSeconds = computeStartSeconds(incomingId);
@@ -384,21 +357,23 @@ const Room = () => {
   }, [isPlayerReady, currentVideo, playerRef, computeStartSeconds]);
 
   const onVideoEnd = () => {
-    // Only proceed if we actually loaded the currentVideo into the player
     if (!currentVideo || lastVideoIdRef.current !== currentVideo.id) return;
     console.log("[INFO] Video ended, requesting next video");
-    if (socket) {
-      socket.emit("play-next", roomId);
+    if (socket && playerKey) {
+      socket.emit("player-play-next", { roomId, playerKey });
     }
   };
 
   // Periodically publish playback time to server while video is playing
   useEffect(() => {
+    if (!playerKey || !socket || !isConnected) return;
+
     const interval = setInterval(() => {
-      if (!socket || !playerRef.current) return;
+      if (!playerRef.current) return;
       try {
-        const state = playerRef.current.getPlayerState();
-        // 1=playing, 2=paused, 3=buffering, 0=ended, -1=unstarted, 5=cued
+        const player = playerRef.current;
+        // YouTube IFrame API returns these as functions
+        const state = typeof player.getPlayerState === 'function' ? player.getPlayerState() : -1;
         const stateMap = {
           [-1]: "unstarted",
           0: "ended",
@@ -407,21 +382,58 @@ const Room = () => {
           3: "buffering",
           5: "cued",
         };
-        const positionSec = playerRef.current.getCurrentTime?.() || 0;
-        const durationSec = playerRef.current.getDuration?.() || null;
+        const positionSec = typeof player.getCurrentTime === 'function' ? player.getCurrentTime() : 0;
+        const durationSec = typeof player.getDuration === 'function' ? player.getDuration() : null;
+        
         socket.emit("playback-state", {
           roomId,
+          playerKey,
           state: stateMap[state] || "unknown",
-          positionSec,
-          durationSec,
+          positionSec: positionSec || 0,
+          durationSec: durationSec > 0 ? durationSec : null,
           videoId: currentVideo?.id || null,
         });
-      } catch (_) {}
+      } catch (err) {
+        console.error("[ERR] Failed to get playback state:", err);
+      }
     }, 1000);
     return () => clearInterval(interval);
-  }, [socket, roomId, currentVideo]);
+  }, [socket, roomId, currentVideo, playerKey, isConnected]);
 
-  // Keep YouTube player mounted at all times; display disconnect indicator
+  // Admin actions
+  const handleToggleController = (controllerId, enabled) => {
+    if (socket && playerKey) {
+      socket.emit("admin-toggle-controller", {
+        roomId,
+        playerKey,
+        controllerId,
+        enabled,
+      });
+    }
+  };
+
+  const handleRemoveController = (controllerId) => {
+    if (socket && playerKey) {
+      socket.emit("admin-remove-controller", {
+        roomId,
+        playerKey,
+        controllerId,
+      });
+    }
+  };
+
+  const handleToggleRegistration = (allow) => {
+    if (socket && playerKey) {
+      socket.emit("admin-toggle-registration", {
+        roomId,
+        playerKey,
+        allow,
+      });
+      setAllowNewControllers(allow);
+    }
+  };
+
+  // YouTube player options
   const opts = {
     height: "100%",
     width: "100%",
@@ -432,7 +444,7 @@ const Room = () => {
       playsinline: 1,
       mute: 0,
       enablejsapi: 1,
-      fs: 0, // Disable YouTube's fullscreen button (we use our own)
+      fs: 0,
     },
   };
 
@@ -582,15 +594,6 @@ const Room = () => {
                 onEnd={onVideoEnd}
                 onError={(error) => {
                   console.error("[ERR] YouTube player error:", error);
-                  // Avoid skipping ahead before first load completes
-                  if (
-                    !currentVideo ||
-                    lastVideoIdRef.current !== currentVideo.id
-                  )
-                    return;
-                  if (socket) {
-                    socket.emit("play-next", roomId);
-                  }
                 }}
                 style={{
                   width: "100%",
@@ -836,38 +839,48 @@ const Room = () => {
             borderRadius: 3,
           }}
         >
-          <Box
-            component="a"
-            href={`${backendHost}:${frontendPort}/control/${roomId}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            sx={{
-              flex: 3,
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              p: 2,
-              background: "white",
-              borderRadius: 2,
-              transition: "transform 0.2s",
-              "&:hover": {
-                transform: "scale(1.02)",
-              },
-            }}
-          >
-            <img
-              src={qrCode}
-              alt="Room QR Code"
-              style={{
-                maxWidth: "100%",
+          {qrCode ? (
+            <Box
+              sx={{
+                flex: 3,
+                display: "flex",
                 justifyContent: "center",
                 alignItems: "center",
+                p: 2,
+                background: "white",
+                borderRadius: 2,
               }}
-            />
-          </Box>
+            >
+              <img
+                src={qrCode}
+                alt="Room QR Code"
+                style={{
+                  maxWidth: "100%",
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              />
+            </Box>
+          ) : (
+            <Box
+              sx={{
+                flex: 3,
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                p: 2,
+                background: "rgba(148, 163, 184, 0.1)",
+                borderRadius: 2,
+              }}
+            >
+              <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                {playerKey ? "Loading QR..." : "Missing player key"}
+              </Typography>
+            </Box>
+          )}
           <Divider orientation="vertical" flexItem sx={{ mx: 2, borderColor: "rgba(148, 163, 184, 0.1)" }} />
           <Box sx={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 1.5 }}>
-            <Tooltip title="Settings">
+            <Tooltip title="Room Settings">
               <IconButton
                 onClick={handleSettingsOpen}
                 sx={{
@@ -899,7 +912,7 @@ const Room = () => {
         </Paper>
       </Box>
 
-      {/* Settings Modal */}
+      {/* Settings Modal (Admin Panel) */}
       <Modal
         open={settingsOpen}
         onClose={handleSettingsClose}
@@ -911,7 +924,9 @@ const Room = () => {
             top: "50%",
             left: "50%",
             transform: "translate(-50%, -50%)",
-            width: 420,
+            width: 500,
+            maxHeight: "80vh",
+            overflow: "auto",
             background: "linear-gradient(180deg, #12121A 0%, #0A0A0F 100%)",
             border: "1px solid rgba(148, 163, 184, 0.15)",
             boxShadow: "0 25px 50px rgba(0, 0, 0, 0.5)",
@@ -926,48 +941,142 @@ const Room = () => {
             gutterBottom
             sx={{ fontWeight: 600, mb: 3 }}
           >
-            Backend Settings
+            Room Admin
           </Typography>
-          <TextField
-            fullWidth
-            label="Backend Host"
-            value={backendHost}
-            onChange={handleBackendHostChange}
-            margin="normal"
-            helperText="Enter the backend URL (e.g., http://localhost)"
-          />
-          <TextField
-            fullWidth
-            label="Backend Port"
-            value={backendPort}
-            onChange={handleBackendPortChange}
-            margin="normal"
-            helperText="Enter the backend port (e.g., 8443)"
-            type="number"
-          />
-          <TextField
-            fullWidth
-            label="Frontend Port"
-            value={frontendPort}
-            onChange={handleFrontendPortChange}
-            margin="normal"
-            helperText="Enter the frontend port (e.g., 443)"
-            type="number"
-          />
+
+          {/* Registration Toggle */}
           <Box
-            sx={{ mt: 3, display: "flex", justifyContent: "flex-end", gap: 2 }}
+            sx={{
+              mb: 3,
+              p: 2,
+              background: "rgba(139, 92, 246, 0.05)",
+              borderRadius: 2,
+              border: "1px solid rgba(148, 163, 184, 0.05)",
+            }}
+          >
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={allowNewControllers}
+                  onChange={(e) => handleToggleRegistration(e.target.checked)}
+                  sx={{
+                    "& .MuiSwitch-switchBase.Mui-checked": {
+                      color: "#10B981",
+                    },
+                    "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
+                      backgroundColor: "#10B981",
+                    },
+                  }}
+                />
+              }
+              label="Allow new controller registrations"
+            />
+            <Typography variant="caption" sx={{ display: "block", color: "text.secondary", mt: 1 }}>
+              When disabled, new users cannot join via the QR code.
+            </Typography>
+          </Box>
+
+          {/* Controllers List */}
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+            Connected Controllers ({controllers.length})
+          </Typography>
+
+          {controllers.length === 0 ? (
+            <Box
+              sx={{
+                p: 3,
+                textAlign: "center",
+                background: "rgba(148, 163, 184, 0.05)",
+                borderRadius: 2,
+                border: "1px dashed rgba(148, 163, 184, 0.2)",
+              }}
+            >
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                No controllers registered yet
+              </Typography>
+            </Box>
+          ) : (
+            <List sx={{ bgcolor: "transparent" }}>
+              {controllers.map((controller) => (
+                <ListItem
+                  key={controller.id}
+                  sx={{
+                    mb: 1,
+                    borderRadius: 2,
+                    background: controller.enabled
+                      ? "rgba(16, 185, 129, 0.1)"
+                      : "rgba(239, 68, 68, 0.1)",
+                    border: controller.enabled
+                      ? "1px solid rgba(16, 185, 129, 0.2)"
+                      : "1px solid rgba(239, 68, 68, 0.2)",
+                  }}
+                >
+                  <ListItemText
+                    primary={controller.name}
+                    secondary={
+                      <Box component="span" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                        <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                          ID: {controller.id}
+                        </Typography>
+                        {controller.enabled ? (
+                          <Chip
+                            label="Active"
+                            size="small"
+                            sx={{
+                              height: 16,
+                              fontSize: "0.6rem",
+                              background: "rgba(16, 185, 129, 0.2)",
+                              color: "#10B981",
+                            }}
+                          />
+                        ) : (
+                          <Chip
+                            label="Disabled"
+                            size="small"
+                            sx={{
+                              height: 16,
+                              fontSize: "0.6rem",
+                              background: "rgba(239, 68, 68, 0.2)",
+                              color: "#EF4444",
+                            }}
+                          />
+                        )}
+                      </Box>
+                    }
+                  />
+                  <ListItemSecondaryAction>
+                    <Tooltip title={controller.enabled ? "Disable" : "Enable"}>
+                      <IconButton
+                        edge="end"
+                        onClick={() => handleToggleController(controller.id, !controller.enabled)}
+                        sx={{
+                          mr: 1,
+                          color: controller.enabled ? "#F59E0B" : "#10B981",
+                        }}
+                      >
+                        {controller.enabled ? <BlockIcon /> : <CheckCircleIcon />}
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Remove">
+                      <IconButton
+                        edge="end"
+                        onClick={() => handleRemoveController(controller.id)}
+                        sx={{ color: "#EF4444" }}
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    </Tooltip>
+                  </ListItemSecondaryAction>
+                </ListItem>
+              ))}
+            </List>
+          )}
+
+          <Box
+            sx={{ mt: 3, display: "flex", justifyContent: "flex-end" }}
           >
             <Button
               onClick={handleSettingsClose}
-              sx={{
-                color: "text.secondary",
-                "&:hover": { background: "rgba(148, 163, 184, 0.1)" },
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSaveSettings}
               variant="contained"
               sx={{
                 background: "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
@@ -976,7 +1085,7 @@ const Room = () => {
                 },
               }}
             >
-              Save
+              Close
             </Button>
           </Box>
         </Box>

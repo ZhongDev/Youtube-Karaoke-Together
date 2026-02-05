@@ -13,6 +13,21 @@ A collaborative YouTube video queuing system that allows multiple users to watch
 - **Privacy-First Design** - Comprehensive privacy protection
 - **Terms of Service Protection** - Clear user agreements
 - **Round-Robin Queueing (Optional)** - Fair turn rotation between participants, toggleable from the Controls tab
+- **Secure Room Control** - Token-based authentication for room management
+
+## Security Model
+
+The application uses a token-based authentication system:
+
+- **Player Key**: Generated when a room is created. Used by the room screen for admin actions and playback updates. Stored in the room URL and localStorage.
+- **Control Master Key**: Embedded in the QR code URL. Required to register new controllers.
+- **Controller Keys**: Issued to each user when they scan the QR code and enter their name. Required for all queue operations.
+
+Room admins (the room screen) can:
+- View all registered controllers
+- Enable/disable individual controllers
+- Remove controllers
+- Toggle whether new controller registrations are allowed
 
 ## Prerequisites
 
@@ -22,27 +37,28 @@ A collaborative YouTube video queuing system that allows multiple users to watch
 
 ## Setup
 
-1. Clone the repository:
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/yourusername/youtube-karaoke-together.git
 cd youtube-karaoke-together
 ```
 
-2. Install root/server dependencies:
+### 2. Install dependencies
 
 ```bash
+# Install server dependencies
 npm install
-```
 
-3. Install client dependencies:
-
-```bash
+# Install client dependencies
 cd client
 npm install
+cd ..
 ```
 
-4. Configure environment variables at repo root:
+### 3. Configure environment variables
+
+#### Server (.env)
 
 ```bash
 cp env.example .env
@@ -51,55 +67,152 @@ cp env.example .env
 Edit `.env` and set:
 
 ```bash
-YOUTUBE_API_KEY=your_api_key
-PORT=5000
+PORT=8080
+NODE_ENV=development
+PUBLIC_FRONTEND_ORIGIN=http://localhost:3000
+YOUTUBE_API_KEY=your_api_key_here
 ```
 
-5. Get a YouTube Data API key:
-   - Go to the [Google Cloud Console](https://console.cloud.google.com/)
-   - Enable YouTube Data API v3
-   - Create credentials (API key)
-   - Paste it into `.env`
+#### Client (client/.env) - Development only
+
+```bash
+cd client
+cp .env.example .env
+```
+
+Edit `client/.env`:
+
+```bash
+VITE_DEV=true
+VITE_BACKEND_URL=http://localhost:8080
+```
+
+### 4. Get a YouTube Data API key
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select an existing one
+3. Enable YouTube Data API v3
+4. Create credentials (API key)
+5. Paste it into your `.env` file
 
 ## Running the Application
 
-1. Start the server (root):
+### Development
 
 ```bash
+# Terminal 1: Start the server
 npm run dev
-```
 
-2. Start the client (Vite):
-
-```bash
+# Terminal 2: Start the client
 cd client
 npm run dev
 ```
 
-3. Open `http://localhost:3000`
+Or run both concurrently:
 
-Notes:
+```bash
+npm run dev:full
+```
 
-- The server reads configuration from `client/src/ytkt-config.json`.
-- CORS is automatically configured to the frontend origin defined in that file.
+Open `http://localhost:3000` in your browser.
+
+### Production
+
+#### Server
+
+```bash
+NODE_ENV=production npm start
+```
+
+#### Client
+
+Build the static files:
+
+```bash
+cd client
+npm run build
+```
+
+The built files will be in `client/dist/`. Serve these with nginx or another web server.
+
+## Production Deployment with Nginx
+
+### Nginx Configuration
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name karaoke.example.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    # Serve static client files
+    root /var/www/youtube-karaoke-together/client/dist;
+    index index.html;
+
+    # Client-side routing
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API proxy
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket proxy
+    location /ws/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+}
+```
+
+### Production Environment Variables
+
+```bash
+PORT=8080
+NODE_ENV=production
+PUBLIC_FRONTEND_ORIGIN=https://karaoke.example.com
+YOUTUBE_API_KEY=your_api_key_here
+```
+
+**Important**: In production, the client does NOT need any environment variables. It automatically:
+- Uses `window.location.origin` for API calls
+- Uses `/ws/` path for Socket.IO connections
 
 ## Usage
 
 1. Visit the homepage and accept the Terms of Service
-2. Create a new room (a unique `roomId` will be generated)
-3. Share the displayed QR code; mobile users can open `/control/:roomId`
-4. Use the control panel to search and queue videos (YouTube API v3)
-5. The main room plays the current video; queue updates in real time
+2. Click "Create Room" - this generates a unique room with secure keys
+3. The room screen displays a QR code for mobile users
+4. Mobile users scan the QR code, enter their name, and can then search/queue videos
+5. The room admin can manage controllers from the settings panel (gear icon)
+6. Use the control panel to search and queue videos (YouTube API v3)
+7. The main room plays the current video; queue updates in real time
 
 ## Legal & Compliance
 
 This application is fully compliant with YouTube API Terms of Service:
 
-- ✅ **Terms of Service Binding**: Users explicitly agree to YouTube ToS
-- ✅ **Privacy Policy**: Comprehensive privacy protection disclosure
-- ✅ **Contact Information**: Multiple ways to reach us for support
-- ✅ **Data Transparency**: Clear explanation of data usage
-- ✅ **Google Privacy Policy**: Referenced and linked appropriately
+- **Terms of Service Binding**: Users explicitly agree to YouTube ToS
+- **Privacy Policy**: Comprehensive privacy protection disclosure
+- **Contact Information**: Multiple ways to reach us for support
+- **Data Transparency**: Clear explanation of data usage
+- **Google Privacy Policy**: Referenced and linked appropriately
 
 ### Important Legal Pages
 
@@ -115,6 +228,14 @@ This application is fully compliant with YouTube API Terms of Service:
 - Material UI (MUI)
 - YouTube Data API v3
 - react-youtube
+- express-rate-limit
+
+## API Rate Limits
+
+The server implements rate limiting to prevent abuse:
+
+- **Search API**: 30 requests per minute per IP
+- **Room Creation**: 10 rooms per minute per IP
 
 ## License
 

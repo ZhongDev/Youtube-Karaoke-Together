@@ -1,38 +1,32 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import io from 'socket.io-client';
-import config from '../ytkt-config.json';
+import { getSocketConfig } from '../config';
 
 // Single socket instance to be shared across components
 let socketInstance = null;
+let currentSocketUrl = null;
 
-const useSocket = (backendUrl = null) => {
+const useSocket = () => {
     const [isConnected, setIsConnected] = useState(false);
     const [connectionError, setConnectionError] = useState(null);
     const [serverError, setServerError] = useState(null);
     const hasJoinedRoomRef = useRef(new Set());
 
     useEffect(() => {
-        const url = backendUrl || `${config.backend.ssl ? 'https' : 'http'}://${config.backend.hostname}:${config.backend.port}`;
+        const { url, options } = getSocketConfig();
 
         // Create socket instance if it doesn't exist or URL changed
-        if (!socketInstance || socketInstance.io.uri !== url) {
+        if (!socketInstance || currentSocketUrl !== url) {
             if (socketInstance) {
                 socketInstance.disconnect();
             }
 
-            socketInstance = io(url, {
-                withCredentials: true,
-                transports: ['websocket', 'polling'],
-                reconnection: true,
-                reconnectionDelay: 1000,
-                reconnectionAttempts: Infinity,
-                timeout: 20000
-            });
+            console.log('[INFO] Creating socket connection to:', url, 'with options:', options);
+            socketInstance = io(url, options);
+            currentSocketUrl = url;
         }
 
         const socket = socketInstance;
-        // Expose for one-off emits from non-hook modules (e.g., Settings)
-        try { window.ytktSocket = socket; } catch (_) { }
 
         const handleConnect = () => {
             console.log('[INFO] Socket connected');
@@ -83,27 +77,111 @@ const useSocket = (backendUrl = null) => {
             socket.off('error', handleError);
             socket.off('error-message', handleServerError);
         };
-    }, [backendUrl]);
+    }, []);
 
-    const joinRoom = (roomId, username) => {
+    // Join room (public view, no auth required)
+    const joinRoom = useCallback((roomId) => {
         if (socketInstance && socketInstance.connected && roomId && !hasJoinedRoomRef.current.has(roomId)) {
-            console.log('[INFO] Joining room:', roomId, 'as', username || 'anonymous');
-            socketInstance.emit('join-room', { roomId, username });
+            console.log('[INFO] Joining room:', roomId);
+            socketInstance.emit('join-room', { roomId });
             hasJoinedRoomRef.current.add(roomId);
         }
-    };
+    }, []);
 
-    const leaveRoom = (roomId) => {
+    // Join room as admin (with playerKey)
+    const joinRoomAdmin = useCallback((roomId, playerKey) => {
+        const adminKey = `${roomId}:admin`;
+        if (socketInstance && socketInstance.connected && roomId && playerKey && !hasJoinedRoomRef.current.has(adminKey)) {
+            console.log('[INFO] Joining room as admin:', roomId);
+            socketInstance.emit('join-room-admin', { roomId, playerKey });
+            hasJoinedRoomRef.current.add(adminKey);
+        }
+    }, []);
+
+    // Register a new controller
+    const registerController = useCallback((roomId, controlMasterKey, username) => {
+        return new Promise((resolve, reject) => {
+            if (!socketInstance || !socketInstance.connected) {
+                reject(new Error('Not connected'));
+                return;
+            }
+
+            const handleRegistered = (data) => {
+                socketInstance.off('controller-registered', handleRegistered);
+                socketInstance.off('error-message', handleError);
+                resolve(data);
+            };
+
+            const handleError = (error) => {
+                if (error.type === 'register-controller') {
+                    socketInstance.off('controller-registered', handleRegistered);
+                    socketInstance.off('error-message', handleError);
+                    reject(new Error(error.message));
+                }
+            };
+
+            socketInstance.on('controller-registered', handleRegistered);
+            socketInstance.on('error-message', handleError);
+
+            socketInstance.emit('register-controller', { roomId, controlMasterKey, username });
+
+            // Timeout after 10 seconds
+            setTimeout(() => {
+                socketInstance.off('controller-registered', handleRegistered);
+                socketInstance.off('error-message', handleError);
+                reject(new Error('Registration timeout'));
+            }, 10000);
+        });
+    }, []);
+
+    // Authenticate with existing controller key
+    const authController = useCallback((roomId, controllerKey) => {
+        return new Promise((resolve, reject) => {
+            if (!socketInstance || !socketInstance.connected) {
+                reject(new Error('Not connected'));
+                return;
+            }
+
+            const handleAuthenticated = (data) => {
+                socketInstance.off('controller-authenticated', handleAuthenticated);
+                socketInstance.off('error-message', handleError);
+                hasJoinedRoomRef.current.add(roomId);
+                resolve(data);
+            };
+
+            const handleError = (error) => {
+                if (error.type === 'auth-controller') {
+                    socketInstance.off('controller-authenticated', handleAuthenticated);
+                    socketInstance.off('error-message', handleError);
+                    reject(new Error(error.message));
+                }
+            };
+
+            socketInstance.on('controller-authenticated', handleAuthenticated);
+            socketInstance.on('error-message', handleError);
+
+            socketInstance.emit('auth-controller', { roomId, controllerKey });
+
+            // Timeout after 10 seconds
+            setTimeout(() => {
+                socketInstance.off('controller-authenticated', handleAuthenticated);
+                socketInstance.off('error-message', handleError);
+                reject(new Error('Authentication timeout'));
+            }, 10000);
+        });
+    }, []);
+
+    const leaveRoom = useCallback((roomId) => {
         if (socketInstance && roomId && hasJoinedRoomRef.current.has(roomId)) {
             console.log('[INFO] Leaving room:', roomId);
             socketInstance.emit('leave-room', roomId);
             hasJoinedRoomRef.current.delete(roomId);
         }
-    };
+    }, []);
 
-    const clearServerError = () => {
+    const clearServerError = useCallback(() => {
         setServerError(null);
-    };
+    }, []);
 
     return {
         socket: socketInstance,
@@ -112,8 +190,11 @@ const useSocket = (backendUrl = null) => {
         serverError,
         clearServerError,
         joinRoom,
+        joinRoomAdmin,
+        registerController,
+        authController,
         leaveRoom
     };
 };
 
-export default useSocket; 
+export default useSocket;

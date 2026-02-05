@@ -13,6 +13,7 @@ import {
   Checkbox,
   FormControlLabel,
   Divider,
+  CircularProgress,
 } from "@mui/material";
 import {
   PlayCircleOutline,
@@ -22,13 +23,15 @@ import {
   MusicNote,
 } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
-import { v4 as uuidv4 } from "uuid";
+import { getBackendUrl, storePlayerKey } from "../config";
 
 const HomePage = () => {
   const navigate = useNavigate();
   const [tosDialogOpen, setTosDialogOpen] = useState(false);
   const [tosAccepted, setTosAccepted] = useState(false);
   const [dontAskAgain, setDontAskAgain] = useState(false);
+  const [isCreatingRoom, setIsCreatingRoom] = useState(false);
+  const [createError, setCreateError] = useState(null);
 
   useEffect(() => {
     // Check if user chose "don't ask again"
@@ -43,14 +46,43 @@ const HomePage = () => {
     }
   }, []);
 
-  const handleCreateRoom = () => {
+  const handleCreateRoom = async () => {
     if (!tosAccepted) {
       setTosDialogOpen(true);
       return;
     }
 
-    const roomId = uuidv4();
-    navigate(`/room/${roomId}`);
+    setIsCreatingRoom(true);
+    setCreateError(null);
+
+    try {
+      const backendUrl = getBackendUrl();
+      const response = await fetch(`${backendUrl}/api/rooms`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to create room (${response.status})`);
+      }
+
+      const data = await response.json();
+      const { roomId, playerKey } = data;
+
+      // Store player key for this room
+      storePlayerKey(roomId, playerKey);
+
+      // Navigate to room with playerKey in URL (for initial setup)
+      navigate(`/room/${roomId}?key=${encodeURIComponent(playerKey)}`);
+    } catch (error) {
+      console.error('[ERR] Failed to create room:', error);
+      setCreateError(error.message);
+    } finally {
+      setIsCreatingRoom(false);
+    }
   };
 
   const handleTosAccept = () => {
@@ -210,10 +242,27 @@ const HomePage = () => {
               synchronized playback across all devices.
             </Typography>
 
+            {createError && (
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "#EF4444",
+                  mb: 2,
+                  p: 2,
+                  background: "rgba(239, 68, 68, 0.1)",
+                  borderRadius: 2,
+                  display: "inline-block",
+                }}
+              >
+                {createError}
+              </Typography>
+            )}
+
             <Button
               variant="contained"
               size="large"
               onClick={handleCreateRoom}
+              disabled={isCreatingRoom}
               sx={{
                 px: 5,
                 py: 2,
@@ -227,9 +276,19 @@ const HomePage = () => {
                   boxShadow: "0 12px 40px rgba(139, 92, 246, 0.5)",
                   background: "linear-gradient(135deg, #A78BFA 0%, #8B5CF6 100%)",
                 },
+                "&:disabled": {
+                  background: "rgba(139, 92, 246, 0.5)",
+                },
               }}
             >
-              Create Room
+              {isCreatingRoom ? (
+                <>
+                  <CircularProgress size={20} sx={{ color: "white", mr: 1 }} />
+                  Creating Room...
+                </>
+              ) : (
+                "Create Room"
+              )}
             </Button>
           </Box>
 

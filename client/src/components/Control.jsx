@@ -29,14 +29,22 @@ import {
   Add as AddIcon,
   PlaylistAdd as PlaylistIcon,
 } from "@mui/icons-material";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import Queue from "./Queue.jsx";
 import Settings from "./Settings.jsx";
 import useSocket from "../hooks/useSocket";
-import config from "../ytkt-config.json";
+import {
+  getBackendUrl,
+  getStoredControllerKey,
+  storeControllerKey,
+  STORAGE_KEYS,
+} from "../config";
 
 const Control = () => {
   const { roomId } = useParams();
+  const [searchParams] = useSearchParams();
+  const controlMasterKey = searchParams.get('token');
+
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -47,29 +55,19 @@ const Control = () => {
     message: "",
     severity: "info",
   });
+
+  // Auth state
+  const [controllerKey, setControllerKey] = useState(() => getStoredControllerKey(roomId));
   const [username, setUsername] = useState(() => {
-    const savedUsername = localStorage.getItem("karaokeUsername");
-    return savedUsername || "";
+    return localStorage.getItem(STORAGE_KEYS.USERNAME) || "";
   });
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [showNameModal, setShowNameModal] = useState(false);
+  const [nameError, setNameError] = useState(null);
   const [rememberMe, setRememberMe] = useState(() => {
-    return localStorage.getItem("karaokeRememberMe") === "true";
+    return localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) === "true";
   });
-  const [showNameModal, setShowNameModal] = useState(() => {
-    const rememberMe = localStorage.getItem("karaokeRememberMe");
-    const hasUsername = localStorage.getItem("karaokeUsername");
 
-    // Show modal if user hasn't chosen to remember (rememberMe !== 'true')
-    // This covers:
-    // 1. First time users (rememberMe is null)
-    // 2. Users who explicitly chose not to remember (rememberMe === 'false')
-    // 3. Users with no username
-    if (rememberMe !== "true") {
-      return true;
-    }
-
-    // If remember is true but no username, still show modal
-    return !hasUsername;
-  });
   const [currentTab, setCurrentTab] = useState(0);
   const [hasSearched, setHasSearched] = useState(false);
   const [settingsState, setSettingsState] = useState({
@@ -77,6 +75,7 @@ const Control = () => {
   });
   const [playback, setPlayback] = useState(null);
   const [currentVideo, setCurrentVideo] = useState(null);
+  const [allowNewControllers, setAllowNewControllers] = useState(true);
   const loadingRef = useRef(false);
   const observer = useRef();
 
@@ -87,145 +86,100 @@ const Control = () => {
     connectionError,
     serverError,
     clearServerError,
-    joinRoom,
+    registerController,
+    authController,
   } = useSocket();
 
-  const loadMoreResults = useCallback(async () => {
-    if (!nextPageToken || loadingRef.current) return;
+  // Check if we need to register or authenticate
+  useEffect(() => {
+    if (!isConnected || !roomId) return;
 
-    loadingRef.current = true;
-    setIsLoadingMore(true);
-
-    try {
-      const query = searchQuery.trim();
-      console.log(
-        "[INFO] Loading more results for:",
-        query,
-        "with token:",
-        nextPageToken
-      );
-      const API_URL = `${config.backend.ssl ? "https" : "http"}://${
-        config.backend.hostname
-      }:${config.backend.port}`;
-      const response = await fetch(
-        `${API_URL}/api/search?query=${encodeURIComponent(
-          query
-        )}&pageToken=${encodeURIComponent(nextPageToken)}`
-      );
-      if (!response.ok) {
-        throw new Error(`Load more failed with status: ${response.status}`);
-      }
-      const data = await response.json();
-      console.log("[INFO] Load more results:", data);
-
-      const transformedResults = data.items.map((item) => ({
-        id: item.id.videoId || item.id.playlistId,
-        title: item.snippet.title,
-        channelTitle: item.snippet.channelTitle,
-        isPlaylist: !!item.id.playlistId,
-      }));
-
-      setSearchResults((prevResults) => {
-        const existingIds = new Set(prevResults.map((r) => r.id));
-        const newResults = transformedResults.filter(
-          (r) => !existingIds.has(r.id)
-        );
-        return [...prevResults, ...newResults];
-      });
-
-      setNextPageToken(data.nextPageToken);
-    } catch (error) {
-      console.error("[ERR] Load more failed:", error);
-    } finally {
-      setIsLoadingMore(false);
-      loadingRef.current = false;
-    }
-  }, [nextPageToken, searchQuery]);
-
-  const lastResultRef = useCallback(
-    (node) => {
-      if (loadingRef.current || !nextPageToken) return;
-
-      if (observer.current) {
-        observer.current.disconnect();
-      }
-
-      observer.current = new IntersectionObserver(
-        (entries) => {
-          if (
-            entries[0].isIntersecting &&
-            !loadingRef.current &&
-            nextPageToken
-          ) {
-            loadMoreResults();
+    const existingKey = getStoredControllerKey(roomId);
+    
+    if (existingKey) {
+      // Try to authenticate with existing key
+      authController(roomId, existingKey)
+        .then((data) => {
+          console.log('[INFO] Authenticated as:', data.username);
+          setControllerKey(existingKey);
+          setUsername(data.username);
+        })
+        .catch((error) => {
+          console.log('[WARN] Existing key invalid:', error.message);
+          // Clear invalid key and show registration modal
+          storeControllerKey(roomId, '');
+          setControllerKey(null);
+          if (controlMasterKey) {
+            setShowNameModal(true);
+          } else {
+            setNotification({
+              open: true,
+              message: "Your session has expired. Please scan the QR code again.",
+              severity: "error",
+            });
           }
-        },
-        {
-          threshold: 0.5,
-        }
-      );
-
-      if (node) {
-        observer.current.observe(node);
-      }
-    },
-    [nextPageToken, loadMoreResults]
-  );
-
-  // Handle initial username setup
-  useEffect(() => {
-    const rememberMe = localStorage.getItem("karaokeRememberMe");
-    const savedUsername = localStorage.getItem("karaokeUsername");
-
-    // If user chose not to remember, we should clear the username on page load
-    // to force them to enter it again
-    if (rememberMe === "false") {
-      localStorage.removeItem("karaokeUsername");
-      setUsername("");
-    } else if (savedUsername) {
-      setUsername(savedUsername);
+        });
+    } else if (controlMasterKey) {
+      // No existing key, need to register
+      setShowNameModal(true);
+    } else {
+      // No key and no master key - invalid access
+      setNotification({
+        open: true,
+        message: "Missing access token. Please scan the QR code from the room screen.",
+        severity: "error",
+      });
     }
-  }, []);
+  }, [isConnected, roomId, controlMasterKey, authController]);
 
-  // Join room when connected (send username for RR tracking)
-  useEffect(() => {
-    if (!roomId) {
-      console.error("[ERR] No roomId provided");
-      return;
-    }
-
-    console.log("[INFO] Control component mounted, roomId:", roomId);
-
-    if (isConnected) {
-      joinRoom(roomId, username);
-    }
-  }, [roomId, isConnected, joinRoom, username]);
-
-  // Listen for room state, settings and playback updates
+  // Listen for room state updates
   useEffect(() => {
     if (!socket) return;
+
     const handleRoomState = (room) => {
+      console.log("[INFO] Control received room state:", room);
       setSettingsState(room.settings || { roundRobinEnabled: false });
       setPlayback(room.playback || null);
       setCurrentVideo(room.currentVideo || null);
+      setAllowNewControllers(room.allowNewControllers !== false);
     };
+
     const handleSettingsUpdated = (newSettings) =>
       setSettingsState(newSettings || { roundRobinEnabled: false });
     const handlePlaybackUpdated = (pb) => setPlayback(pb);
     const handleVideoChanged = (video) => setCurrentVideo(video);
+    const handleRegistrationStatus = ({ allowNewControllers: allow }) => {
+      setAllowNewControllers(allow);
+    };
+    const handleQueueUpdated = (newQueue) => {
+      // Just to ensure we're in sync - queue state is managed elsewhere but 
+      // we update currentVideo display state if needed
+    };
 
     socket.on("room-state", handleRoomState);
     socket.on("settings-updated", handleSettingsUpdated);
     socket.on("playback-updated", handlePlaybackUpdated);
     socket.on("video-changed", handleVideoChanged);
+    socket.on("registration-status", handleRegistrationStatus);
+    socket.on("queue-updated", handleQueueUpdated);
 
     return () => {
       socket.off("room-state", handleRoomState);
       socket.off("settings-updated", handleSettingsUpdated);
       socket.off("playback-updated", handlePlaybackUpdated);
       socket.off("video-changed", handleVideoChanged);
+      socket.off("registration-status", handleRegistrationStatus);
+      socket.off("queue-updated", handleQueueUpdated);
     };
-  }, [socket, roomId]);
+  }, [socket]);
+
+  // Request room state when authenticated (ensures we have the latest state)
+  useEffect(() => {
+    if (socket && isConnected && controllerKey && roomId) {
+      console.log("[INFO] Requesting room state after authentication");
+      socket.emit("request-room-state", { roomId });
+    }
+  }, [socket, isConnected, controllerKey, roomId]);
 
   // Show connection error notifications
   useEffect(() => {
@@ -246,37 +200,158 @@ const Control = () => {
         message: `Server Error: ${serverError.message}`,
         severity: "error",
       });
-      // Clear the server error after showing notification
       clearServerError();
     }
   }, [serverError, clearServerError]);
 
-  // Listen for username changes from Settings
-  useEffect(() => {
-    const handleStorageChange = (e) => {
-      if (e.key === "karaokeUsername" && e.newValue) {
-        setUsername(e.newValue);
-      }
-    };
+  // Validate username (no [ or ] characters)
+  const validateUsername = (name) => {
+    if (!name || !name.trim()) {
+      return "Please enter a name";
+    }
+    if (name.includes('[') || name.includes(']')) {
+      return "Name cannot contain [ or ] characters";
+    }
+    if (name.length > 50) {
+      return "Name must be 50 characters or less";
+    }
+    return null;
+  };
 
-    window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
-  }, []);
+  // Handle registration
+  const handleRegister = async () => {
+    const error = validateUsername(username);
+    if (error) {
+      setNameError(error);
+      return;
+    }
+
+    if (!controlMasterKey) {
+      setNotification({
+        open: true,
+        message: "Missing access token. Please scan the QR code again.",
+        severity: "error",
+      });
+      return;
+    }
+
+    setIsRegistering(true);
+    setNameError(null);
+
+    try {
+      const data = await registerController(roomId, controlMasterKey, username.trim());
+      console.log('[INFO] Registered as:', data.username, 'with key:', data.controllerKey.substring(0, 8));
+      
+      // Store the key
+      storeControllerKey(roomId, data.controllerKey);
+      setControllerKey(data.controllerKey);
+      setUsername(data.username);
+
+      // Save username preference
+      if (rememberMe) {
+        localStorage.setItem(STORAGE_KEYS.USERNAME, data.username);
+        localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "true");
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.REMEMBER_ME);
+      }
+
+      setShowNameModal(false);
+    } catch (error) {
+      console.error('[ERR] Registration failed:', error);
+      setNameError(error.message);
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  const loadMoreResults = useCallback(async () => {
+    if (!nextPageToken || loadingRef.current || !controllerKey) return;
+
+    loadingRef.current = true;
+    setIsLoadingMore(true);
+
+    try {
+      const query = searchQuery.trim();
+      console.log("[INFO] Loading more results for:", query, "with token:", nextPageToken);
+      const backendUrl = getBackendUrl();
+      const response = await fetch(
+        `${backendUrl}/api/search?query=${encodeURIComponent(query)}&pageToken=${encodeURIComponent(nextPageToken)}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${controllerKey}`,
+          },
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Load more failed with status: ${response.status}`);
+      }
+      const data = await response.json();
+      console.log("[INFO] Load more results:", data);
+
+      const transformedResults = data.items.map((item) => ({
+        id: item.id.videoId || item.id.playlistId,
+        title: item.snippet.title,
+        channelTitle: item.snippet.channelTitle,
+        isPlaylist: !!item.id.playlistId,
+      }));
+
+      setSearchResults((prevResults) => {
+        const existingIds = new Set(prevResults.map((r) => r.id));
+        const newResults = transformedResults.filter((r) => !existingIds.has(r.id));
+        return [...prevResults, ...newResults];
+      });
+
+      setNextPageToken(data.nextPageToken);
+    } catch (error) {
+      console.error("[ERR] Load more failed:", error);
+    } finally {
+      setIsLoadingMore(false);
+      loadingRef.current = false;
+    }
+  }, [nextPageToken, searchQuery, controllerKey]);
+
+  const lastResultRef = useCallback(
+    (node) => {
+      if (loadingRef.current || !nextPageToken) return;
+
+      if (observer.current) {
+        observer.current.disconnect();
+      }
+
+      observer.current = new IntersectionObserver(
+        (entries) => {
+          if (entries[0].isIntersecting && !loadingRef.current && nextPageToken) {
+            loadMoreResults();
+          }
+        },
+        { threshold: 0.5 }
+      );
+
+      if (node) {
+        observer.current.observe(node);
+      }
+    },
+    [nextPageToken, loadMoreResults]
+  );
 
   const handleSearch = async () => {
     const query = searchQuery.trim();
-    if (!query) return;
+    if (!query || !controllerKey) return;
 
     setIsSearching(true);
     setNextPageToken(null);
-    setHasSearched(true); // Mark that a search has been performed
+    setHasSearched(true);
+
     try {
       console.log("[INFO] Searching for:", query);
-      const API_URL = `${config.backend.ssl ? "https" : "http"}://${
-        config.backend.hostname
-      }:${config.backend.port}`;
+      const backendUrl = getBackendUrl();
       const response = await fetch(
-        `${API_URL}/api/search?query=${encodeURIComponent(query)}`
+        `${backendUrl}/api/search?query=${encodeURIComponent(query)}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${controllerKey}`,
+          },
+        }
       );
       if (!response.ok) {
         throw new Error(`Search failed with status: ${response.status}`);
@@ -315,12 +390,11 @@ const Control = () => {
   };
 
   const addToQueue = (video) => {
-    if (!username.trim()) {
-      setCurrentTab(2); // Switch to settings tab
+    if (!controllerKey) {
       setNotification({
         open: true,
-        message: "Please set your name in settings first!",
-        severity: "warning",
+        message: "Not authenticated. Please refresh the page.",
+        severity: "error",
       });
       return;
     }
@@ -335,11 +409,7 @@ const Control = () => {
     }
 
     console.log("[INFO] Adding to queue:", video);
-    const videoData = {
-      ...video,
-      addedBy: username,
-    };
-    socket.emit("add-to-queue", { roomId, video: videoData });
+    socket.emit("add-to-queue", { roomId, video, controllerKey });
 
     setNotification({
       open: true,
@@ -348,34 +418,26 @@ const Control = () => {
     });
   };
 
-  const handleNameSubmit = () => {
-    if (username.trim()) {
-      // Always save the username to localStorage
-      localStorage.setItem("karaokeUsername", username);
-
-      if (rememberMe) {
-        localStorage.setItem("karaokeRememberMe", "true");
-      } else {
-        localStorage.removeItem("karaokeRememberMe");
-      }
-      setShowNameModal(false);
-    }
-  };
-
   const handleSkip = () => {
-    if (!username.trim()) {
-      setShowNameModal(true);
+    if (!controllerKey) {
+      setNotification({
+        open: true,
+        message: "Not authenticated. Please refresh the page.",
+        severity: "error",
+      });
       return;
     }
-    socket.emit("play-next", roomId);
+    socket.emit("play-next", { roomId, controllerKey });
   };
 
   const toggleRoundRobin = (event) => {
+    if (!controllerKey) return;
     const enabled = !!event.target.checked;
     setSettingsState((prev) => ({ ...prev, roundRobinEnabled: enabled }));
     if (socket) {
       socket.emit("update-settings", {
         roomId,
+        controllerKey,
         settings: { roundRobinEnabled: enabled },
       });
     }
@@ -383,12 +445,8 @@ const Control = () => {
 
   const formatTime = (sec) => {
     if (sec == null || Number.isNaN(sec)) return "--:--";
-    const s = Math.floor(sec % 60)
-      .toString()
-      .padStart(2, "0");
-    const m = Math.floor(sec / 60)
-      .toString()
-      .padStart(2, "0");
+    const s = Math.floor(sec % 60).toString().padStart(2, "0");
+    const m = Math.floor(sec / 60).toString().padStart(2, "0");
     return `${m}:${s}`;
   };
 
@@ -441,12 +499,12 @@ const Control = () => {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyPress={handleKeyPress}
-            disabled={!isConnected || isSearching}
+            disabled={!isConnected || isSearching || !controllerKey}
           />
           <Button
             variant="contained"
             onClick={handleSearch}
-            disabled={!isConnected || isSearching || !searchQuery.trim()}
+            disabled={!isConnected || isSearching || !searchQuery.trim() || !controllerKey}
             sx={{
               background: "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
               minWidth: 100,
@@ -569,7 +627,7 @@ const Control = () => {
               {/* Add Button */}
               <IconButton
                 onClick={() => addToQueue(result)}
-                disabled={!isConnected}
+                disabled={!isConnected || !controllerKey}
                 sx={{
                   flexShrink: 0,
                   color: "#10B981",
@@ -597,13 +655,7 @@ const Control = () => {
 
           {/* Empty State */}
           {searchResults.length === 0 && hasSearched && !isSearching && (
-            <Box
-              sx={{
-                py: 4,
-                textAlign: "center",
-                color: "text.secondary",
-              }}
-            >
+            <Box sx={{ py: 4, textAlign: "center", color: "text.secondary" }}>
               <Typography variant="body2">No results found</Typography>
             </Box>
           )}
@@ -638,6 +690,24 @@ const Control = () => {
             />
           )}
         </Typography>
+
+        {/* User info */}
+        {username && (
+          <Box
+            sx={{
+              mb: 2,
+              p: 2,
+              background: "rgba(16, 185, 129, 0.1)",
+              borderRadius: 2,
+              border: "1px solid rgba(16, 185, 129, 0.2)",
+            }}
+          >
+            <Typography variant="body2" sx={{ color: "#10B981" }}>
+              Signed in as: <strong>{username}</strong>
+            </Typography>
+          </Box>
+        )}
+
         <Box
           sx={{
             display: "flex",
@@ -655,6 +725,7 @@ const Control = () => {
               <Switch
                 checked={!!settingsState.roundRobinEnabled}
                 onChange={toggleRoundRobin}
+                disabled={!controllerKey}
                 sx={{
                   "& .MuiSwitch-switchBase.Mui-checked": {
                     color: "#8B5CF6",
@@ -668,6 +739,7 @@ const Control = () => {
             label="Round-robin queue"
           />
         </Box>
+
         {currentVideo && (
           <Box
             sx={{
@@ -678,10 +750,7 @@ const Control = () => {
               border: "1px solid rgba(139, 92, 246, 0.2)",
             }}
           >
-            <Typography
-              variant="subtitle2"
-              sx={{ color: "#8B5CF6", fontWeight: 600, mb: 1 }}
-            >
+            <Typography variant="subtitle2" sx={{ color: "#8B5CF6", fontWeight: 600, mb: 1 }}>
               Now Playing
             </Typography>
             <Typography variant="body1" sx={{ fontWeight: 500, mb: 2 }}>
@@ -692,19 +761,10 @@ const Control = () => {
                 {formatTime(playback?.positionSec)}
               </Typography>
               <LinearProgress
-                variant={
-                  playback?.durationSec ? "determinate" : "indeterminate"
-                }
+                variant={playback?.durationSec ? "determinate" : "indeterminate"}
                 value={
                   playback?.durationSec
-                    ? Math.max(
-                        0,
-                        Math.min(
-                          100,
-                          (100 * (playback?.positionSec || 0)) /
-                            (playback?.durationSec || 1)
-                        )
-                      )
+                    ? Math.max(0, Math.min(100, (100 * (playback?.positionSec || 0)) / (playback?.durationSec || 1)))
                     : 0
                 }
                 sx={{ flex: 1 }}
@@ -718,12 +778,13 @@ const Control = () => {
             </Typography>
           </Box>
         )}
+
         <Box sx={{ display: "flex", justifyContent: "center", gap: 2 }}>
           <Button
             variant="contained"
             startIcon={<SkipIcon />}
             onClick={handleSkip}
-            disabled={!isConnected}
+            disabled={!isConnected || !controllerKey}
             sx={{
               background: "linear-gradient(135deg, #EC4899 0%, #DB2777 100%)",
               px: 4,
@@ -772,35 +833,49 @@ const Control = () => {
           Enter Your Name
         </DialogTitle>
         <DialogContent sx={{ px: 3 }}>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Your Name"
-            fullWidth
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            onKeyPress={(e) => e.key === "Enter" && handleNameSubmit()}
-          />
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                sx={{
-                  color: "text.secondary",
-                  "&.Mui-checked": { color: "#8B5CF6" },
+          {!allowNewControllers ? (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              New registrations are currently disabled for this room.
+            </Alert>
+          ) : (
+            <>
+              <TextField
+                autoFocus
+                margin="dense"
+                label="Your Name"
+                fullWidth
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setNameError(null);
                 }}
+                onKeyPress={(e) => e.key === "Enter" && handleRegister()}
+                error={!!nameError}
+                helperText={nameError || "Names cannot contain [ or ] characters"}
+                disabled={isRegistering}
               />
-            }
-            label="Remember me"
-            sx={{ mt: 1, color: "text.secondary" }}
-          />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    sx={{
+                      color: "text.secondary",
+                      "&.Mui-checked": { color: "#8B5CF6" },
+                    }}
+                  />
+                }
+                label="Remember me"
+                sx={{ mt: 1, color: "text.secondary" }}
+              />
+            </>
+          )}
         </DialogContent>
         <DialogActions sx={{ justifyContent: "center", pb: 4 }}>
           <Button
-            onClick={handleNameSubmit}
+            onClick={handleRegister}
             variant="contained"
-            disabled={!username.trim()}
+            disabled={!username.trim() || isRegistering || !allowNewControllers}
             sx={{
               minWidth: 150,
               background: "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
@@ -812,13 +887,20 @@ const Control = () => {
               },
             }}
           >
-            Continue
+            {isRegistering ? (
+              <>
+                <CircularProgress size={16} sx={{ color: "white", mr: 1 }} />
+                Registering...
+              </>
+            ) : (
+              "Continue"
+            )}
           </Button>
         </DialogActions>
       </Dialog>
 
       {currentTab === 0 && renderSearchTab()}
-      {currentTab === 1 && <Queue />}
+      {currentTab === 1 && <Queue controllerKey={controllerKey} />}
       {currentTab === 2 && renderControlsTab()}
       {currentTab === 3 && <Settings />}
 
@@ -843,9 +925,7 @@ const Control = () => {
           icon={<SearchIcon />}
           sx={{
             color: "text.secondary",
-            "&.Mui-selected": {
-              color: "#8B5CF6",
-            },
+            "&.Mui-selected": { color: "#8B5CF6" },
           }}
         />
         <BottomNavigationAction
@@ -853,9 +933,7 @@ const Control = () => {
           icon={<QueueIcon />}
           sx={{
             color: "text.secondary",
-            "&.Mui-selected": {
-              color: "#8B5CF6",
-            },
+            "&.Mui-selected": { color: "#8B5CF6" },
           }}
         />
         <BottomNavigationAction
@@ -863,9 +941,7 @@ const Control = () => {
           icon={<SkipIcon />}
           sx={{
             color: "text.secondary",
-            "&.Mui-selected": {
-              color: "#8B5CF6",
-            },
+            "&.Mui-selected": { color: "#8B5CF6" },
           }}
         />
         <BottomNavigationAction
@@ -873,9 +949,7 @@ const Control = () => {
           icon={<SettingsIcon />}
           sx={{
             color: "text.secondary",
-            "&.Mui-selected": {
-              color: "#8B5CF6",
-            },
+            "&.Mui-selected": { color: "#8B5CF6" },
           }}
         />
       </BottomNavigation>
@@ -900,9 +974,7 @@ const Control = () => {
                 ? "linear-gradient(135deg, #F59E0B 0%, #D97706 100%)"
                 : "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
             color: "white",
-            "& .MuiAlert-icon": {
-              color: "white",
-            },
+            "& .MuiAlert-icon": { color: "white" },
           }}
         >
           {notification.message}
