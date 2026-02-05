@@ -64,6 +64,9 @@ console.log('[INFO] Limits loaded:', LIMITS);
 const app = express();
 const server = http.createServer(app);
 
+// Trust nginx proxy for client IPs (rate limiting)
+app.set('trust proxy', 'loopback');
+
 // ----- CORS Configuration -----
 const allowedOrigins = [PUBLIC_FRONTEND_ORIGIN];
 if (NODE_ENV === 'development') {
