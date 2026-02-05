@@ -204,6 +204,18 @@ const Control = () => {
     }
   }, [serverError, clearServerError]);
 
+  // Listen for username updates from Settings
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === STORAGE_KEYS.USERNAME && e.newValue) {
+        setUsername(e.newValue);
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
   // Validate username (no [ or ] characters)
   const validateUsername = (name) => {
     if (!name || !name.trim()) {

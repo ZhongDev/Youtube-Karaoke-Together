@@ -171,6 +171,41 @@ const useSocket = () => {
         });
     }, []);
 
+    // Rename controller
+    const renameController = useCallback((roomId, controllerKey, newName) => {
+        return new Promise((resolve, reject) => {
+            if (!socketInstance || !socketInstance.connected) {
+                reject(new Error('Not connected'));
+                return;
+            }
+
+            const handleRenamed = (data) => {
+                socketInstance.off('controller-renamed', handleRenamed);
+                socketInstance.off('error-message', handleError);
+                resolve(data);
+            };
+
+            const handleError = (error) => {
+                if (error.type === 'rename-controller') {
+                    socketInstance.off('controller-renamed', handleRenamed);
+                    socketInstance.off('error-message', handleError);
+                    reject(new Error(error.message));
+                }
+            };
+
+            socketInstance.on('controller-renamed', handleRenamed);
+            socketInstance.on('error-message', handleError);
+
+            socketInstance.emit('rename-controller', { roomId, controllerKey, newName });
+
+            setTimeout(() => {
+                socketInstance.off('controller-renamed', handleRenamed);
+                socketInstance.off('error-message', handleError);
+                reject(new Error('Rename timeout'));
+            }, 10000);
+        });
+    }, []);
+
     const leaveRoom = useCallback((roomId) => {
         if (socketInstance && roomId && hasJoinedRoomRef.current.has(roomId)) {
             console.log('[INFO] Leaving room:', roomId);
@@ -193,6 +228,7 @@ const useSocket = () => {
         joinRoomAdmin,
         registerController,
         authController,
+        renameController,
         leaveRoom
     };
 };

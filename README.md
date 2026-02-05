@@ -28,6 +28,7 @@ Room admins (the room screen) can:
 - Enable/disable individual controllers
 - Remove controllers
 - Toggle whether new controller registrations are allowed
+- Rename controllers (updates existing queue entries)
 
 ## Prerequisites
 
@@ -71,6 +72,29 @@ PORT=8080
 NODE_ENV=development
 PUBLIC_FRONTEND_ORIGIN=http://localhost:3000
 YOUTUBE_API_KEY=your_api_key_here
+
+### 3a. Configure limits (optional)
+
+The server uses `server-limits.json` for capacity and payload bounds. Defaults are generous but finite.
+
+```json
+{
+  "maxRooms": 5000,
+  "maxControllersPerRoom": 500,
+  "maxQueueLengthPerRoom": 1000,
+  "maxUsernameLength": 50,
+  "maxVideoTitleLength": 200,
+  "maxVideoIdLength": 64,
+  "maxSearchQueryLength": 200,
+  "maxHttpBufferSize": 65536
+}
+```
+
+To override the path:
+
+```bash
+LIMITS_CONFIG_PATH=/path/to/server-limits.json
+```
 ```
 
 #### Client (client/.env) - Development only
@@ -236,6 +260,15 @@ The server implements rate limiting to prevent abuse:
 
 - **Search API**: 30 requests per minute per IP
 - **Room Creation**: 10 rooms per minute per IP
+
+## Capacity Limits
+
+These are enforced on the server to prevent unbounded growth:
+
+- Max rooms: `server-limits.json` (`maxRooms`)
+- Max controllers per room: `maxControllersPerRoom`
+- Max queue length per room: `maxQueueLengthPerRoom`
+- Payload limits: `maxHttpBufferSize` and per-field length limits
 
 ## License
 

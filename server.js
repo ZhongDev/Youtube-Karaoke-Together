@@ -8,19 +8,58 @@ const crypto = require('crypto');
 const QRCode = require('qrcode');
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
+const fs = require('fs');
+const path = require('path');
 
 // ----- Configuration -----
 const PORT = Number(process.env.PORT) || 8080;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const PUBLIC_FRONTEND_ORIGIN = process.env.PUBLIC_FRONTEND_ORIGIN || 'http://localhost:3000';
+const LIMITS_CONFIG_PATH = process.env.LIMITS_CONFIG_PATH || path.join(__dirname, 'server-limits.json');
+
+const DEFAULT_LIMITS = {
+    maxRooms: 5000,
+    maxControllersPerRoom: 500,
+    maxQueueLengthPerRoom: 1000,
+    maxUsernameLength: 50,
+    maxVideoTitleLength: 200,
+    maxVideoIdLength: 64,
+    maxSearchQueryLength: 200,
+    maxHttpBufferSize: 64 * 1024,
+};
+
+function loadLimitsConfig() {
+    const limits = { ...DEFAULT_LIMITS };
+    try {
+        if (!fs.existsSync(LIMITS_CONFIG_PATH)) {
+            console.log(`[WARN] Limits config not found at ${LIMITS_CONFIG_PATH}, using defaults.`);
+            return limits;
+        }
+        const raw = fs.readFileSync(LIMITS_CONFIG_PATH, 'utf8');
+        const parsed = JSON.parse(raw);
+        for (const [key, value] of Object.entries(DEFAULT_LIMITS)) {
+            if (typeof parsed[key] === 'number' && Number.isFinite(parsed[key]) && parsed[key] > 0) {
+                limits[key] = parsed[key];
+            }
+        }
+    } catch (error) {
+        console.log(`[WARN] Failed to load limits config: ${error.message}. Using defaults.`);
+    }
+    return limits;
+}
+
+const LIMITS = loadLimitsConfig();
 
 // Log environment variables (excluding sensitive data)
 console.log('[INFO] Environment loaded:', {
     PORT,
     NODE_ENV,
     PUBLIC_FRONTEND_ORIGIN,
+    LIMITS_CONFIG_PATH,
     YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY ? 'Configured' : 'Not configured'
 });
+
+console.log('[INFO] Limits loaded:', LIMITS);
 
 const app = express();
 const server = http.createServer(app);
@@ -51,6 +90,7 @@ app.use(cors(corsOptions));
 // Socket.IO with restricted CORS and /ws/ path for production
 const io = socketIo(server, {
     path: NODE_ENV === 'production' ? '/ws/' : '/socket.io/',
+    maxHttpBufferSize: LIMITS.maxHttpBufferSize,
     cors: {
         origin: allowedOrigins,
         methods: ['GET', 'POST'],
@@ -94,16 +134,28 @@ function generateSecureToken() {
     return crypto.randomBytes(32).toString('base64url');
 }
 
-function sanitizeUsername(name) {
-    if (!name || typeof name !== 'string') return null;
-    // Remove [ and ] characters
-    const sanitized = name.replace(/[\[\]]/g, '').trim();
-    return sanitized.length > 0 ? sanitized.substring(0, 50) : null;
+function validateUsername(name) {
+    if (!name || typeof name !== 'string') {
+        return { valid: false, error: 'Invalid username provided' };
+    }
+    const trimmed = name.trim();
+    if (trimmed.length === 0) {
+        return { valid: false, error: 'Username cannot be empty' };
+    }
+    if (trimmed.includes('[') || trimmed.includes(']')) {
+        return { valid: false, error: 'Invalid username. Please remove [ or ] characters.' };
+    }
+    if (trimmed.length > LIMITS.maxUsernameLength) {
+        return { valid: false, error: `Username must be ${LIMITS.maxUsernameLength} characters or less.` };
+    }
+    return { valid: true, name: trimmed };
 }
 
-function makeUniqueUsername(room, baseName) {
+function makeUniqueUsername(room, baseName, excludeControllerKey = null) {
     const existingNames = new Set(
-        Array.from(room.controllers.values()).map(c => c.name)
+        Array.from(room.controllers.entries())
+            .filter(([key]) => key !== excludeControllerKey)
+            .map(([, controller]) => controller.name)
     );
     if (!existingNames.has(baseName)) {
         return baseName;
@@ -113,6 +165,25 @@ function makeUniqueUsername(room, baseName) {
         counter++;
     }
     return `${baseName} [${counter}]`;
+}
+
+function renameParticipant(room, oldName, newName) {
+    if (!oldName || !newName || oldName === newName) return;
+
+    const idx = room.roundRobin.participants.findIndex((u) => u === oldName);
+    if (idx !== -1) {
+        room.roundRobin.participants[idx] = newName;
+    }
+
+    for (const item of room.queue) {
+        if (item.addedBy === oldName) {
+            item.addedBy = newName;
+        }
+    }
+
+    if (room.currentVideo && room.currentVideo.addedBy === oldName) {
+        room.currentVideo.addedBy = newName;
+    }
 }
 
 // ----- Room State -----
@@ -313,6 +384,9 @@ async function generateRoomQR(roomId, controlMasterKey) {
 // Create a new room
 app.post('/api/rooms', roomCreateLimiter, async (req, res) => {
     try {
+        if (rooms.size >= LIMITS.maxRooms) {
+            return res.status(503).json({ error: 'Room limit reached. Please try again later.' });
+        }
         const roomId = uuidv4();
         const room = createEmptyRoom();
         rooms.set(roomId, room);
@@ -400,14 +474,22 @@ app.get('/api/search', searchLimiter, async (req, res) => {
         return res.status(401).json({ error: 'Unauthorized - valid controller key required' });
     }
 
+    const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+    if (!normalizedQuery) {
+        return res.status(400).json({ error: 'Search query is required' });
+    }
+    if (normalizedQuery.length > LIMITS.maxSearchQueryLength) {
+        return res.status(400).json({ error: `Search query must be ${LIMITS.maxSearchQueryLength} characters or less` });
+    }
+
     try {
-        console.log(`[INFO] Searching YouTube for: "${query}"${pageToken ? ` with pageToken: ${pageToken}` : ''}`);
+        console.log(`[INFO] Searching YouTube for: "${normalizedQuery}"${pageToken ? ` with pageToken: ${pageToken}` : ''}`);
         const response = await axios.get(
             `https://www.googleapis.com/youtube/v3/search`,
             {
                 params: {
                     part: 'snippet',
-                    q: query,
+                    q: normalizedQuery,
                     type: 'video,playlist',
                     key: apiKey,
                     maxResults: 10,
@@ -525,15 +607,20 @@ io.on('connection', (socket) => {
                 return;
             }
 
+            if (room.controllers.size >= LIMITS.maxControllersPerRoom) {
+                socket.emit('error-message', { type: 'register-controller', message: 'Room is at maximum controller capacity' });
+                return;
+            }
+
             // Validate and sanitize username
-            const sanitized = sanitizeUsername(username);
-            if (!sanitized) {
-                socket.emit('error-message', { type: 'register-controller', message: 'Invalid username. Please provide a valid name without [ or ] characters.' });
+            const validation = validateUsername(username);
+            if (!validation.valid) {
+                socket.emit('error-message', { type: 'register-controller', message: validation.error });
                 return;
             }
 
             // Make unique name
-            const uniqueName = makeUniqueUsername(room, sanitized);
+            const uniqueName = makeUniqueUsername(room, validation.name);
 
             // Generate controller key
             const controllerKey = generateSecureToken();
@@ -591,6 +678,48 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Rename controller (requires controllerKey)
+    socket.on('rename-controller', ({ roomId, controllerKey, newName }) => {
+        try {
+            const room = rooms.get(roomId);
+            if (!room) {
+                socket.emit('error-message', { type: 'rename-controller', message: 'Room not found' });
+                return;
+            }
+
+            const auth = validateControllerKey(room, controllerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'rename-controller', message: auth.error });
+                return;
+            }
+
+            const validation = validateUsername(newName);
+            if (!validation.valid) {
+                socket.emit('error-message', { type: 'rename-controller', message: validation.error });
+                return;
+            }
+
+            const currentName = auth.controller.name;
+            const uniqueName = makeUniqueUsername(room, validation.name, controllerKey);
+
+            if (currentName !== uniqueName) {
+                auth.controller.name = uniqueName;
+                renameParticipant(room, currentName, uniqueName);
+
+                io.to(roomId).emit('queue-updated', room.queue);
+                if (room.currentVideo) {
+                    io.to(roomId).emit('video-changed', room.currentVideo);
+                }
+                io.to(`${roomId}:admin`).emit('controllers-updated', getAdminRoomState(room).controllers);
+            }
+
+            socket.emit('controller-renamed', { username: uniqueName });
+        } catch (error) {
+            console.log(`[ERR] Failed to rename controller:`, error.message);
+            socket.emit('error-message', { type: 'rename-controller', message: 'Failed to rename controller' });
+        }
+    });
+
     // Add to queue (requires controllerKey)
     socket.on('add-to-queue', ({ roomId, video, controllerKey }) => {
         console.log(`[INFO] Received add-to-queue event from socket ${socket.id} for room ${roomId}`);
@@ -610,6 +739,21 @@ io.on('connection', (socket) => {
 
             if (!video || !video.id || !video.title) {
                 socket.emit('error-message', { type: 'add-to-queue', message: 'Invalid video data provided' });
+                return;
+            }
+
+            if (room.queue.length >= LIMITS.maxQueueLengthPerRoom) {
+                socket.emit('error-message', { type: 'add-to-queue', message: 'Queue is at maximum capacity' });
+                return;
+            }
+
+            if (typeof video.title !== 'string' || video.title.length > LIMITS.maxVideoTitleLength) {
+                socket.emit('error-message', { type: 'add-to-queue', message: `Video title must be ${LIMITS.maxVideoTitleLength} characters or less` });
+                return;
+            }
+
+            if (typeof video.id !== 'string' || video.id.length > LIMITS.maxVideoIdLength) {
+                socket.emit('error-message', { type: 'add-to-queue', message: 'Invalid video ID' });
                 return;
             }
 

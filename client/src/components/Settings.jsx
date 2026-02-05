@@ -12,6 +12,7 @@ import {
 import SettingsIcon from "@mui/icons-material/Settings";
 import { useParams } from "react-router-dom";
 import { STORAGE_KEYS, getStoredControllerKey, removeControllerKey } from "../config";
+import useSocket from "../hooks/useSocket";
 
 const Settings = () => {
   const { roomId } = useParams();
@@ -22,7 +23,11 @@ const Settings = () => {
     return localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) === "true";
   });
   const [saved, setSaved] = useState(false);
+  const [renameError, setRenameError] = useState(null);
+  const [isRenaming, setIsRenaming] = useState(false);
   const hasControllerKey = !!getStoredControllerKey(roomId);
+
+  const { socket, isConnected, renameController } = useSocket();
 
   // Listen for changes to localStorage
   useEffect(() => {
@@ -37,28 +42,65 @@ const Settings = () => {
     return () => window.removeEventListener("storage", handleStorageChange);
   }, [username]);
 
-  const handleSave = () => {
-    if (username.trim()) {
-      if (rememberMe) {
-        localStorage.setItem(STORAGE_KEYS.USERNAME, username);
-        localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "true");
-      } else {
-        localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "false");
-        localStorage.setItem(STORAGE_KEYS.USERNAME, username);
+  const handleSave = async () => {
+    const trimmed = username.trim();
+    if (!trimmed) return;
+
+    setRenameError(null);
+
+    const controllerKey = getStoredControllerKey(roomId);
+    if (controllerKey && socket && isConnected) {
+      try {
+        setIsRenaming(true);
+        const result = await renameController(roomId, controllerKey, trimmed);
+        const finalName = result?.username || trimmed;
+        setUsername(finalName);
+
+        if (rememberMe) {
+          localStorage.setItem(STORAGE_KEYS.USERNAME, finalName);
+          localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "true");
+        } else {
+          localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "false");
+          localStorage.setItem(STORAGE_KEYS.USERNAME, finalName);
+        }
+
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: STORAGE_KEYS.USERNAME,
+            newValue: finalName,
+            oldValue: localStorage.getItem(STORAGE_KEYS.USERNAME),
+          })
+        );
+
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      } catch (error) {
+        setRenameError(error.message || 'Failed to rename');
+      } finally {
+        setIsRenaming(false);
       }
-
-      // Trigger a storage event to notify other components
-      window.dispatchEvent(
-        new StorageEvent("storage", {
-          key: STORAGE_KEYS.USERNAME,
-          newValue: username,
-          oldValue: localStorage.getItem(STORAGE_KEYS.USERNAME),
-        })
-      );
-
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      return;
     }
+
+    // Fallback: store local preference only
+    if (rememberMe) {
+      localStorage.setItem(STORAGE_KEYS.USERNAME, trimmed);
+      localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "true");
+    } else {
+      localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "false");
+      localStorage.setItem(STORAGE_KEYS.USERNAME, trimmed);
+    }
+
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: STORAGE_KEYS.USERNAME,
+        newValue: trimmed,
+        oldValue: localStorage.getItem(STORAGE_KEYS.USERNAME),
+      })
+    );
+
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   };
 
   const handleClearSession = () => {
@@ -101,6 +143,19 @@ const Settings = () => {
           </Alert>
         )}
 
+        {renameError && (
+          <Alert
+            severity="error"
+            sx={{
+              mb: 3,
+              background: "rgba(239, 68, 68, 0.1)",
+              border: "1px solid rgba(239, 68, 68, 0.2)",
+            }}
+          >
+            {renameError}
+          </Alert>
+        )}
+
         <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
           <Box>
             <Typography variant="subtitle2" sx={{ mb: 1, color: "text.secondary" }}>
@@ -134,7 +189,7 @@ const Settings = () => {
           <Button
             variant="contained"
             onClick={handleSave}
-            disabled={!username.trim()}
+            disabled={!username.trim() || isRenaming}
             sx={{
               background: "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
               py: 1.5,
@@ -146,7 +201,7 @@ const Settings = () => {
               },
             }}
           >
-            Save Settings
+            {isRenaming ? "Renaming..." : "Save Settings"}
           </Button>
 
           {/* Session Management */}

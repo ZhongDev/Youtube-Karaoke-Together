@@ -1,0 +1,10 @@
+{
+  "maxRooms": 5000,
+  "maxControllersPerRoom": 500,
+  "maxQueueLengthPerRoom": 1000,
+  "maxUsernameLength": 50,
+  "maxVideoTitleLength": 200,
+  "maxVideoIdLength": 64,
+  "maxSearchQueryLength": 200,
+  "maxHttpBufferSize": 65536
+}
