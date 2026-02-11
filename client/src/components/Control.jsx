@@ -38,6 +38,8 @@ import {
   getStoredControllerKey,
   storeControllerKey,
   STORAGE_KEYS,
+  getStoredPreferredUsername,
+  normalizeStoredUsername,
 } from "../config";
 
 // Helper to get localStorage boolean with default
@@ -65,7 +67,7 @@ const Control = () => {
   // Auth state
   const [controllerKey, setControllerKey] = useState(() => getStoredControllerKey(roomId));
   const [username, setUsername] = useState(() => {
-    return localStorage.getItem(STORAGE_KEYS.USERNAME) || "";
+    return getStoredPreferredUsername();
   });
   const [isRegistering, setIsRegistering] = useState(false);
   const [showNameModal, setShowNameModal] = useState(false);
@@ -218,8 +220,8 @@ const Control = () => {
   // Listen for username updates from Settings
   useEffect(() => {
     const handleStorageChange = (e) => {
-      if (e.key === STORAGE_KEYS.USERNAME && e.newValue) {
-        setUsername(e.newValue);
+      if (e.key === STORAGE_KEYS.USERNAME) {
+        setUsername(normalizeStoredUsername(e.newValue || ""));
       }
     };
 
@@ -243,7 +245,12 @@ const Control = () => {
 
   // Handle registration
   const handleRegister = async () => {
-    const error = validateUsername(username);
+    const preferredName = normalizeStoredUsername(username);
+    if (preferredName !== username) {
+      setUsername(preferredName);
+    }
+
+    const error = validateUsername(preferredName);
     if (error) {
       setNameError(error);
       return;
@@ -262,7 +269,7 @@ const Control = () => {
     setNameError(null);
 
     try {
-      const data = await registerController(roomId, controlMasterKey, username.trim());
+      const data = await registerController(roomId, controlMasterKey, preferredName);
       console.log('[INFO] Registered as:', data.username, 'with key:', data.controllerKey.substring(0, 8));
       
       // Store the key
@@ -273,7 +280,7 @@ const Control = () => {
 
       // Save username preference
       if (rememberMe) {
-        localStorage.setItem(STORAGE_KEYS.USERNAME, data.username);
+        localStorage.setItem(STORAGE_KEYS.USERNAME, preferredName);
         localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "true");
       } else {
         localStorage.removeItem(STORAGE_KEYS.REMEMBER_ME);

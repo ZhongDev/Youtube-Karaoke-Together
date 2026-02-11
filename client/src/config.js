@@ -83,6 +83,29 @@ export const STORAGE_KEYS = {
 };
 
 /**
+ * Normalize a preferred username stored in localStorage.
+ * Removes room collision suffixes like "Name [2]" and strips bracket chars.
+ */
+export function normalizeStoredUsername(name) {
+    if (!name || typeof name !== 'string') return '';
+    const trimmed = name.trim();
+    const withoutCollisionSuffix = trimmed.replace(/\s\[\d+\]$/, '');
+    return withoutCollisionSuffix.replace(/[\[\]]/g, '').trim();
+}
+
+/**
+ * Get stored preferred username and auto-heal legacy suffixed values.
+ */
+export function getStoredPreferredUsername() {
+    const raw = localStorage.getItem(STORAGE_KEYS.USERNAME) || '';
+    const normalized = normalizeStoredUsername(raw);
+    if (raw !== normalized) {
+        localStorage.setItem(STORAGE_KEYS.USERNAME, normalized);
+    }
+    return normalized;
+}
+
+/**
  * Get stored controller key for a room
  */
 export function getStoredControllerKey(roomId) {
@@ -130,6 +153,8 @@ export default {
     getFrontendOrigin,
     isDevMode,
     STORAGE_KEYS,
+    normalizeStoredUsername,
+    getStoredPreferredUsername,
     getStoredControllerKey,
     storeControllerKey,
     removeControllerKey,

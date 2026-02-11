@@ -15,13 +15,19 @@ import {
 import SettingsIcon from "@mui/icons-material/Settings";
 import ShuffleIcon from "@mui/icons-material/Shuffle";
 import { useParams } from "react-router-dom";
-import { STORAGE_KEYS, getStoredControllerKey, removeControllerKey } from "../config";
+import {
+  STORAGE_KEYS,
+  getStoredControllerKey,
+  removeControllerKey,
+  getStoredPreferredUsername,
+  normalizeStoredUsername,
+} from "../config";
 import useSocket from "../hooks/useSocket";
 
 const Settings = ({ queueColorsEnabled, onToggleQueueColors, bgColorEnabled, onToggleBgColor, colorHue, onColorChange, onColorCommit }) => {
   const { roomId } = useParams();
   const [username, setUsername] = useState(() => {
-    return localStorage.getItem(STORAGE_KEYS.USERNAME) || "";
+    return getStoredPreferredUsername();
   });
   const [rememberMe, setRememberMe] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) === "true";
@@ -37,8 +43,9 @@ const Settings = ({ queueColorsEnabled, onToggleQueueColors, bgColorEnabled, onT
   useEffect(() => {
     const handleStorageChange = () => {
       const savedUsername = localStorage.getItem(STORAGE_KEYS.USERNAME);
-      if (savedUsername !== username) {
-        setUsername(savedUsername || "");
+      const normalized = normalizeStoredUsername(savedUsername || "");
+      if (normalized !== username) {
+        setUsername(normalized);
       }
     };
 
@@ -47,8 +54,12 @@ const Settings = ({ queueColorsEnabled, onToggleQueueColors, bgColorEnabled, onT
   }, [username]);
 
   const handleSave = async () => {
-    const trimmed = username.trim();
-    if (!trimmed) return;
+    const preferredName = normalizeStoredUsername(username);
+    if (!preferredName) return;
+
+    if (preferredName !== username) {
+      setUsername(preferredName);
+    }
 
     setRenameError(null);
 
@@ -56,22 +67,22 @@ const Settings = ({ queueColorsEnabled, onToggleQueueColors, bgColorEnabled, onT
     if (controllerKey && socket && isConnected) {
       try {
         setIsRenaming(true);
-        const result = await renameController(roomId, controllerKey, trimmed);
-        const finalName = result?.username || trimmed;
+        const result = await renameController(roomId, controllerKey, preferredName);
+        const finalName = result?.username || preferredName;
         setUsername(finalName);
 
         if (rememberMe) {
-          localStorage.setItem(STORAGE_KEYS.USERNAME, finalName);
+          localStorage.setItem(STORAGE_KEYS.USERNAME, preferredName);
           localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "true");
         } else {
           localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "false");
-          localStorage.setItem(STORAGE_KEYS.USERNAME, finalName);
+          localStorage.setItem(STORAGE_KEYS.USERNAME, preferredName);
         }
 
         window.dispatchEvent(
           new StorageEvent("storage", {
             key: STORAGE_KEYS.USERNAME,
-            newValue: finalName,
+            newValue: preferredName,
             oldValue: localStorage.getItem(STORAGE_KEYS.USERNAME),
           })
         );
@@ -88,17 +99,17 @@ const Settings = ({ queueColorsEnabled, onToggleQueueColors, bgColorEnabled, onT
 
     // Fallback: store local preference only
     if (rememberMe) {
-      localStorage.setItem(STORAGE_KEYS.USERNAME, trimmed);
+      localStorage.setItem(STORAGE_KEYS.USERNAME, preferredName);
       localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "true");
     } else {
       localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "false");
-      localStorage.setItem(STORAGE_KEYS.USERNAME, trimmed);
+      localStorage.setItem(STORAGE_KEYS.USERNAME, preferredName);
     }
 
     window.dispatchEvent(
       new StorageEvent("storage", {
         key: STORAGE_KEYS.USERNAME,
-        newValue: trimmed,
+        newValue: preferredName,
         oldValue: localStorage.getItem(STORAGE_KEYS.USERNAME),
       })
     );
