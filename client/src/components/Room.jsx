@@ -51,6 +51,7 @@ const Room = () => {
   }, [urlPlayerKey, roomId]);
 
   const [qrCode, setQrCode] = useState(null);
+  const [controlUrl, setControlUrl] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [currentVideo, setCurrentVideo] = useState(null);
   const [initalStartSeconds, setInitalStartSeconds] = useState(null);
@@ -179,12 +180,19 @@ const Room = () => {
 
       const data = await response.json();
       setQrCode(data.qrCode);
+      setControlUrl(data.controlUrl || null);
       console.log("[INFO] QR code fetched successfully");
     } catch (error) {
       console.error("[ERR] Failed to fetch QR code:", error);
       setQrCode(null);
+      setControlUrl(null);
     }
   }, [roomId, playerKey]);
+
+  const handleQRCodeClick = useCallback(() => {
+    if (!controlUrl) return;
+    window.open(controlUrl, "_blank", "noopener,noreferrer");
+  }, [controlUrl]);
 
   // Fetch QR code on mount and when playerKey becomes available
   useEffect(() => {
@@ -862,6 +870,16 @@ const Room = () => {
         >
           {qrCode ? (
             <Box
+              role="button"
+              tabIndex={0}
+              aria-label="Open control page"
+              onClick={handleQRCodeClick}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  handleQRCodeClick();
+                }
+              }}
               sx={{
                 flex: 3,
                 display: "flex",
@@ -870,6 +888,7 @@ const Room = () => {
                 p: 2,
                 background: "white",
                 borderRadius: 2,
+                cursor: controlUrl ? "pointer" : "default",
               }}
             >
               <img

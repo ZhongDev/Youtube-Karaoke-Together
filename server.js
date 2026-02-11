@@ -421,8 +421,12 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 // ----- QR Code Generation -----
+function buildControlUrl(roomId, controlMasterKey) {
+    return `${PUBLIC_FRONTEND_ORIGIN}/control/${roomId}?token=${encodeURIComponent(controlMasterKey)}`;
+}
+
 async function generateRoomQR(roomId, controlMasterKey) {
-    const url = `${PUBLIC_FRONTEND_ORIGIN}/control/${roomId}?token=${encodeURIComponent(controlMasterKey)}`;
+    const url = buildControlUrl(roomId, controlMasterKey);
     return await QRCode.toDataURL(url);
 }
 
@@ -470,7 +474,8 @@ app.get('/api/rooms/:roomId/qr', async (req, res) => {
         }
 
         const qrCode = await generateRoomQR(roomId, room.controlMasterKey);
-        res.json({ qrCode });
+        const controlUrl = buildControlUrl(roomId, room.controlMasterKey);
+        res.json({ qrCode, controlUrl });
     } catch (error) {
         console.error(`[ERR] Failed to generate QR code: ${error.message}`);
         res.status(500).json({ error: 'Failed to generate QR code' });
