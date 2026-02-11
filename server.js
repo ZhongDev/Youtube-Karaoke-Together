@@ -28,6 +28,9 @@ const DEFAULT_LIMITS = {
     maxHttpBufferSize: 64 * 1024,
 };
 
+const MAX_TOKEN_GENERATION_ATTEMPTS = 5;
+const MAX_ROOM_ID_GENERATION_ATTEMPTS = 5;
+
 function loadLimitsConfig() {
     const limits = { ...DEFAULT_LIMITS };
     try {
@@ -192,7 +195,48 @@ function renameParticipant(room, oldName, newName) {
 // ----- Room State -----
 const rooms = new Map();
 
+function generateUniqueValue(generator, isCollision, maxAttempts, label) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const value = generator();
+        if (!isCollision(value)) {
+            return value;
+        }
+        console.log(`[WARN] ${label} collision detected on attempt ${attempt}; retrying.`);
+    }
+    throw new Error(`Unable to generate unique ${label} after ${maxAttempts} attempts`);
+}
+
+function isAuthTokenInUse(token) {
+    for (const room of rooms.values()) {
+        if (room.controlMasterKey === token || room.playerKey === token || room.controllers.has(token)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function generateUniqueRoomId() {
+    return generateUniqueValue(
+        () => uuidv4(),
+        (roomId) => rooms.has(roomId),
+        MAX_ROOM_ID_GENERATION_ATTEMPTS,
+        'room ID'
+    );
+}
+
+function generateUniqueAuthToken(additionalCollisionCheck = () => false) {
+    return generateUniqueValue(
+        generateSecureToken,
+        (token) => additionalCollisionCheck(token) || isAuthTokenInUse(token),
+        MAX_TOKEN_GENERATION_ATTEMPTS,
+        'auth token'
+    );
+}
+
 function createEmptyRoom() {
+    const controlMasterKey = generateUniqueAuthToken();
+    const playerKey = generateUniqueAuthToken((token) => token === controlMasterKey);
+
     return {
         queue: [],
         currentVideo: null,
@@ -212,8 +256,8 @@ function createEmptyRoom() {
         },
         createdAt: Date.now(),
         // Auth keys
-        controlMasterKey: generateSecureToken(),
-        playerKey: generateSecureToken(),
+        controlMasterKey,
+        playerKey,
         // Controller management
         controllers: new Map(), // controllerKey -> { name, enabled, createdAt }
         allowNewControllers: true,
@@ -390,7 +434,7 @@ app.post('/api/rooms', roomCreateLimiter, async (req, res) => {
         if (rooms.size >= LIMITS.maxRooms) {
             return res.status(503).json({ error: 'Room limit reached. Please try again later.' });
         }
-        const roomId = uuidv4();
+        const roomId = generateUniqueRoomId();
         const room = createEmptyRoom();
         rooms.set(roomId, room);
 
@@ -626,7 +670,7 @@ io.on('connection', (socket) => {
             const uniqueName = makeUniqueUsername(room, validation.name);
 
             // Generate controller key
-            const controllerKey = generateSecureToken();
+            const controllerKey = generateUniqueAuthToken();
             room.controllers.set(controllerKey, {
                 name: uniqueName,
                 enabled: true,
