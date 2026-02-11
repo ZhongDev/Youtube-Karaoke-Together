@@ -265,6 +265,8 @@ function createEmptyRoom() {
         // Controller management
         controllers: new Map(), // controllerKey -> { name, enabled, createdAt }
         allowNewControllers: true,
+        // Auto-incrementing ID for queue items (used for animation keys)
+        nextQueueId: 1,
     };
 }
 
@@ -865,6 +867,7 @@ io.on('connection', (socket) => {
                 ...video,
                 addedBy: auth.controller.name,
                 colorHue: auth.controller.colorHue,
+                queueId: room.nextQueueId++,
             };
 
             if (room.queue.length === 0 && !room.currentVideo) {

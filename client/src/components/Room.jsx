@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   Box,
   Chip,
@@ -786,12 +787,24 @@ const Room = () => {
 
           {/* Queue List */}
           <Box sx={{ flex: 1, overflow: "auto", px: 1.5, py: 1, display: "flex", flexDirection: "column", gap: 1 }}>
-            {queue.map((video, index) => {
+            <AnimatePresence initial={false}>
+            {queue.map((video) => {
               const hue = video.colorHue;
               const hasColor = roomQueueColorsEnabled && hue != null;
               return (
+              <motion.div
+                key={video.queueId || video.id}
+                layout
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -30 }}
+                transition={{
+                  layout: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+                  opacity: { duration: 0.15, ease: "easeOut" },
+                  y: { duration: 0.15, ease: [0.0, 0, 0.2, 1] },
+                }}
+              >
               <Box
-                key={index}
                 sx={{
                   display: "flex",
                   alignItems: "center",
@@ -804,7 +817,7 @@ const Room = () => {
                   border: hasColor
                     ? `1px solid hsla(${hue}, 66.6%, 66.6%, 0.2)`
                     : "1px solid rgba(148, 163, 184, 0.05)",
-                  transition: "all 0.2s ease",
+                  transition: "background 0.2s ease, border 0.2s ease",
                   "&:hover": {
                     background: hasColor
                       ? `linear-gradient(135deg, hsla(${hue}, 66.6%, 66.6%, 0.28) 0%, hsla(${hue}, 66.6%, 66.6%, 0.1) 100%)`
@@ -857,8 +870,10 @@ const Room = () => {
                   </Typography>
                 </Box>
               </Box>
+              </motion.div>
               );
             })}
+            </AnimatePresence>
 
             {/* Empty State */}
             {queue.length === 0 && (

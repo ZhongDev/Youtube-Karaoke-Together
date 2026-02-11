@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   Box,
   Paper,
@@ -199,7 +200,7 @@ const Queue = ({ controllerKey, queueColorsEnabled = true }) => {
           : hasColor
             ? `1px solid hsla(${hue}, 66.6%, 66.6%, 0.2)`
             : "1px solid rgba(148, 163, 184, 0.08)",
-        transition: "all 0.2s ease",
+        transition: "background 0.2s ease, border 0.2s ease",
         "&:hover": isNowPlaying ? {} : {
           background: hasColor
             ? `linear-gradient(135deg, hsla(${hue}, 66.6%, 66.6%, 0.28) 0%, hsla(${hue}, 66.6%, 66.6%, 0.1) 100%)`
@@ -470,16 +471,30 @@ const Queue = ({ controllerKey, queueColorsEnabled = true }) => {
 
             {/* Queue List */}
             <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+              <AnimatePresence initial={false}>
               {queue.map((video, index) => (
-                <VideoCard
-                  key={`${video.id}-${index}`}
-                  video={video}
-                  onAction={() => handleDeleteClick(video, index)}
-                  actionIcon={<DeleteIcon fontSize="small" />}
-                  actionColor="#EF4444"
-                  actionBgColor="rgba(239, 68, 68, 0.1)"
-                />
+                <motion.div
+                  key={video.queueId || `${video.id}-${index}`}
+                  layout
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -30 }}
+                  transition={{
+                    layout: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+                    opacity: { duration: 0.15, ease: "easeOut" },
+                    y: { duration: 0.15, ease: [0.0, 0, 0.2, 1] },
+                  }}
+                >
+                  <VideoCard
+                    video={video}
+                    onAction={() => handleDeleteClick(video, index)}
+                    actionIcon={<DeleteIcon fontSize="small" />}
+                    actionColor="#EF4444"
+                    actionBgColor="rgba(239, 68, 68, 0.1)"
+                  />
+                </motion.div>
               ))}
+              </AnimatePresence>
 
               {/* Empty State */}
               {queue.length === 0 && (
