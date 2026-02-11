@@ -140,6 +140,10 @@ function generateSecureToken() {
     return crypto.randomBytes(32).toString('base64url');
 }
 
+function generateRandomHue() {
+    return Math.floor(Math.random() * 360);
+}
+
 function validateUsername(name) {
     if (!name || typeof name !== 'string') {
         return { valid: false, error: 'Invalid username provided' };
@@ -291,6 +295,7 @@ function getAdminRoomState(room) {
             name: data.name,
             enabled: data.enabled,
             createdAt: data.createdAt,
+            colorHue: data.colorHue,
         });
     }
     return {
@@ -674,12 +679,14 @@ io.on('connection', (socket) => {
             // Make unique name
             const uniqueName = makeUniqueUsername(room, validation.name);
 
-            // Generate controller key
+            // Generate controller key and assign a random color hue
             const controllerKey = generateUniqueAuthToken();
+            const colorHue = generateRandomHue();
             room.controllers.set(controllerKey, {
                 name: uniqueName,
                 enabled: true,
                 createdAt: Date.now(),
+                colorHue,
             });
 
             currentControllerKey = controllerKey;
@@ -690,7 +697,7 @@ io.on('connection', (socket) => {
             upsertParticipant(room, uniqueName);
 
             console.log(`[INFO] Registered controller "${uniqueName}" for room ${roomId}`);
-            socket.emit('controller-registered', { controllerKey, username: uniqueName });
+            socket.emit('controller-registered', { controllerKey, username: uniqueName, colorHue });
             // Send current room state to the newly registered controller
             socket.emit('room-state', getPublicRoomState(room));
 
@@ -722,7 +729,7 @@ io.on('connection', (socket) => {
             socket.join(roomId);
 
             console.log(`[INFO] Controller "${auth.controller.name}" authenticated for room ${roomId}`);
-            socket.emit('controller-authenticated', { username: auth.controller.name });
+            socket.emit('controller-authenticated', { username: auth.controller.name, colorHue: auth.controller.colorHue });
             socket.emit('room-state', getPublicRoomState(room));
         } catch (error) {
             console.log(`[ERR] Failed to authenticate controller:`, error.message);
@@ -772,6 +779,50 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Update controller color (requires controllerKey)
+    socket.on('update-controller-color', ({ roomId, controllerKey, colorHue }) => {
+        try {
+            const room = rooms.get(roomId);
+            if (!room) {
+                socket.emit('error-message', { type: 'update-controller-color', message: 'Room not found' });
+                return;
+            }
+
+            const auth = validateControllerKey(room, controllerKey);
+            if (!auth.valid) {
+                socket.emit('error-message', { type: 'update-controller-color', message: auth.error });
+                return;
+            }
+
+            if (typeof colorHue !== 'number' || !Number.isFinite(colorHue) || colorHue < 0 || colorHue >= 360) {
+                socket.emit('error-message', { type: 'update-controller-color', message: 'Invalid color hue (must be 0-359)' });
+                return;
+            }
+
+            const newHue = Math.floor(colorHue);
+            auth.controller.colorHue = newHue;
+
+            // Update all queue items and currentVideo from this controller
+            const controllerName = auth.controller.name;
+            for (const item of room.queue) {
+                if (item.addedBy === controllerName) {
+                    item.colorHue = newHue;
+                }
+            }
+            if (room.currentVideo && room.currentVideo.addedBy === controllerName) {
+                room.currentVideo.colorHue = newHue;
+            }
+
+            console.log(`[INFO] Controller "${controllerName}" updated color to hue ${newHue}`);
+            socket.emit('controller-color-updated', { colorHue: newHue });
+            io.to(roomId).emit('queue-updated', room.queue);
+            io.to(`${roomId}:admin`).emit('controllers-updated', getAdminRoomState(room).controllers);
+        } catch (error) {
+            console.log(`[ERR] Failed to update controller color:`, error.message);
+            socket.emit('error-message', { type: 'update-controller-color', message: 'Failed to update color' });
+        }
+    });
+
     // Add to queue (requires controllerKey)
     socket.on('add-to-queue', ({ roomId, video, controllerKey }) => {
         console.log(`[INFO] Received add-to-queue event from socket ${socket.id} for room ${roomId}`);
@@ -809,10 +860,11 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            // Use the controller's registered name
+            // Use the controller's registered name and color
             const videoData = {
                 ...video,
                 addedBy: auth.controller.name,
+                colorHue: auth.controller.colorHue,
             };
 
             if (room.queue.length === 0 && !room.currentVideo) {

@@ -206,6 +206,41 @@ const useSocket = () => {
         });
     }, []);
 
+    // Update controller color
+    const updateControllerColor = useCallback((roomId, controllerKey, colorHue) => {
+        return new Promise((resolve, reject) => {
+            if (!socketInstance || !socketInstance.connected) {
+                reject(new Error('Not connected'));
+                return;
+            }
+
+            const handleUpdated = (data) => {
+                socketInstance.off('controller-color-updated', handleUpdated);
+                socketInstance.off('error-message', handleError);
+                resolve(data);
+            };
+
+            const handleError = (error) => {
+                if (error.type === 'update-controller-color') {
+                    socketInstance.off('controller-color-updated', handleUpdated);
+                    socketInstance.off('error-message', handleError);
+                    reject(new Error(error.message));
+                }
+            };
+
+            socketInstance.on('controller-color-updated', handleUpdated);
+            socketInstance.on('error-message', handleError);
+
+            socketInstance.emit('update-controller-color', { roomId, controllerKey, colorHue });
+
+            setTimeout(() => {
+                socketInstance.off('controller-color-updated', handleUpdated);
+                socketInstance.off('error-message', handleError);
+                reject(new Error('Color update timeout'));
+            }, 10000);
+        });
+    }, []);
+
     const leaveRoom = useCallback((roomId) => {
         if (socketInstance && roomId && hasJoinedRoomRef.current.has(roomId)) {
             console.log('[INFO] Leaving room:', roomId);
@@ -229,6 +264,7 @@ const useSocket = () => {
         registerController,
         authController,
         renameController,
+        updateControllerColor,
         leaveRoom
     };
 };

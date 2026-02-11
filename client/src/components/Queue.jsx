@@ -24,7 +24,7 @@ import {
 import { useParams } from "react-router-dom";
 import useSocket from "../hooks/useSocket";
 
-const Queue = ({ controllerKey }) => {
+const Queue = ({ controllerKey, queueColorsEnabled = true }) => {
   const { roomId } = useParams();
   const [queue, setQueue] = useState([]);
   const [currentVideo, setCurrentVideo] = useState(null);
@@ -178,7 +178,10 @@ const Queue = ({ controllerKey }) => {
   };
 
   // Reusable Video Card Component
-  const VideoCard = ({ video, onAction, actionIcon, actionColor, actionBgColor, isNowPlaying = false }) => (
+  const VideoCard = ({ video, onAction, actionIcon, actionColor, actionBgColor, isNowPlaying = false }) => {
+    const hue = video.colorHue;
+    const hasColor = queueColorsEnabled && !isNowPlaying && hue != null;
+    return (
     <Box
       sx={{
         display: "flex",
@@ -186,12 +189,24 @@ const Queue = ({ controllerKey }) => {
         gap: 2,
         p: 2,
         borderRadius: 2,
-        background: isNowPlaying ? "transparent" : "rgba(139, 92, 246, 0.05)",
-        border: isNowPlaying ? "none" : "1px solid rgba(148, 163, 184, 0.08)",
+        background: isNowPlaying
+          ? "transparent"
+          : hasColor
+            ? `linear-gradient(135deg, hsla(${hue}, 66.6%, 66.6%, 0.1) 0%, hsla(${hue}, 66.6%, 66.6%, 0.06) 100%)`
+            : "rgba(139, 92, 246, 0.05)",
+        border: isNowPlaying
+          ? "none"
+          : hasColor
+            ? `1px solid hsla(${hue}, 66.6%, 66.6%, 0.2)`
+            : "1px solid rgba(148, 163, 184, 0.08)",
         transition: "all 0.2s ease",
         "&:hover": isNowPlaying ? {} : {
-          background: "rgba(139, 92, 246, 0.1)",
-          border: "1px solid rgba(139, 92, 246, 0.2)",
+          background: hasColor
+            ? `linear-gradient(135deg, hsla(${hue}, 66.6%, 66.6%, 0.28) 0%, hsla(${hue}, 66.6%, 66.6%, 0.1) 100%)`
+            : "rgba(139, 92, 246, 0.1)",
+          border: hasColor
+            ? `1px solid hsla(${hue}, 66.6%, 66.6%, 0.35)`
+            : "1px solid rgba(139, 92, 246, 0.2)",
         },
       }}
     >
@@ -269,7 +284,8 @@ const Queue = ({ controllerKey }) => {
         {actionIcon}
       </IconButton>
     </Box>
-  );
+    );
+  };
 
   return (
     <Box sx={{ p: 2, maxWidth: 600, mx: "auto" }}>

@@ -40,6 +40,12 @@ import {
   STORAGE_KEYS,
 } from "../config";
 
+// Helper to get localStorage boolean with default
+function getStorageBool(key, defaultVal = true) {
+  const stored = localStorage.getItem(key);
+  return stored === null ? defaultVal : stored === "true";
+}
+
 const Control = () => {
   const { roomId } = useParams();
   const [searchParams] = useSearchParams();
@@ -67,6 +73,9 @@ const Control = () => {
   const [rememberMe, setRememberMe] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) === "true";
   });
+  const [colorHue, setColorHue] = useState(null);
+  const [queueColorsEnabled, setQueueColorsEnabled] = useState(() => getStorageBool(STORAGE_KEYS.QUEUE_COLORS_ENABLED));
+  const [bgColorEnabled, setBgColorEnabled] = useState(() => getStorageBool(STORAGE_KEYS.BG_COLOR_ENABLED));
 
   const [currentTab, setCurrentTab] = useState(0);
   const [hasSearched, setHasSearched] = useState(false);
@@ -88,6 +97,7 @@ const Control = () => {
     clearServerError,
     registerController,
     authController,
+    updateControllerColor,
   } = useSocket();
 
   // Check if we need to register or authenticate
@@ -103,6 +113,7 @@ const Control = () => {
           console.log('[INFO] Authenticated as:', data.username);
           setControllerKey(existingKey);
           setUsername(data.username);
+          if (data.colorHue != null) setColorHue(data.colorHue);
         })
         .catch((error) => {
           console.log('[WARN] Existing key invalid:', error.message);
@@ -258,6 +269,7 @@ const Control = () => {
       storeControllerKey(roomId, data.controllerKey);
       setControllerKey(data.controllerKey);
       setUsername(data.username);
+      if (data.colorHue != null) setColorHue(data.colorHue);
 
       // Save username preference
       if (rememberMe) {
@@ -440,6 +452,29 @@ const Control = () => {
       return;
     }
     socket.emit("play-next", { roomId, controllerKey });
+  };
+
+  const handleToggleQueueColors = (enabled) => {
+    setQueueColorsEnabled(enabled);
+    localStorage.setItem(STORAGE_KEYS.QUEUE_COLORS_ENABLED, String(enabled));
+  };
+
+  const handleToggleBgColor = (enabled) => {
+    setBgColorEnabled(enabled);
+    localStorage.setItem(STORAGE_KEYS.BG_COLOR_ENABLED, String(enabled));
+  };
+
+  const handleColorChange = (newHue) => {
+    setColorHue(newHue);
+  };
+
+  const handleColorCommit = (newHue) => {
+    const key = getStoredControllerKey(roomId);
+    if (key && isConnected) {
+      updateControllerColor(roomId, key, newHue).catch((err) => {
+        console.error('[ERR] Failed to update color:', err.message);
+      });
+    }
   };
 
   const toggleRoundRobin = (event) => {
@@ -823,7 +858,10 @@ const Control = () => {
         flexDirection: "column",
         minHeight: "100vh",
         pb: 8,
-        background: "linear-gradient(180deg, #0A0A0F 0%, #12121A 100%)",
+        background: bgColorEnabled && colorHue != null
+          ? `linear-gradient(180deg, hsla(${colorHue}, 66.6%, 66.6%, 0.15) 0%, #0A0A0F 30%, #12121A 100%)`
+          : "linear-gradient(180deg, #0A0A0F 0%, #12121A 100%)",
+        transition: "background 0.3s ease",
       }}
     >
       {/* Name Entry Dialog */}
@@ -912,9 +950,19 @@ const Control = () => {
       </Dialog>
 
       {currentTab === 0 && renderSearchTab()}
-      {currentTab === 1 && <Queue controllerKey={controllerKey} />}
+      {currentTab === 1 && <Queue controllerKey={controllerKey} queueColorsEnabled={queueColorsEnabled} />}
       {currentTab === 2 && renderControlsTab()}
-      {currentTab === 3 && <Settings />}
+      {currentTab === 3 && (
+        <Settings
+          queueColorsEnabled={queueColorsEnabled}
+          onToggleQueueColors={handleToggleQueueColors}
+          bgColorEnabled={bgColorEnabled}
+          onToggleBgColor={handleToggleBgColor}
+          colorHue={colorHue}
+          onColorChange={handleColorChange}
+          onColorCommit={handleColorCommit}
+        />
+      )}
 
       <BottomNavigation
         value={currentTab}

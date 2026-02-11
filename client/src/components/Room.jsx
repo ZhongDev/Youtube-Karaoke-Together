@@ -29,7 +29,7 @@ import BlockIcon from "@mui/icons-material/Block";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import Tooltip from "@mui/material/Tooltip";
 import useSocket from "../hooks/useSocket";
-import { getBackendUrl, getStoredPlayerKey, storePlayerKey } from "../config";
+import { getBackendUrl, getStoredPlayerKey, storePlayerKey, STORAGE_KEYS } from "../config";
 
 const Room = () => {
   const { roomId } = useParams();
@@ -70,6 +70,10 @@ const Room = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controllers, setControllers] = useState([]);
   const [allowNewControllers, setAllowNewControllers] = useState(true);
+  const [roomQueueColorsEnabled, setRoomQueueColorsEnabled] = useState(() => {
+    const stored = localStorage.getItem(STORAGE_KEYS.ROOM_QUEUE_COLORS_ENABLED);
+    return stored === null ? true : stored === "true";
+  });
 
   // Use the socket hook
   const {
@@ -462,6 +466,11 @@ const Room = () => {
     }
   };
 
+  const handleToggleRoomQueueColors = (enabled) => {
+    setRoomQueueColorsEnabled(enabled);
+    localStorage.setItem(STORAGE_KEYS.ROOM_QUEUE_COLORS_ENABLED, String(enabled));
+  };
+
   // YouTube player options
   const opts = {
     height: "100%",
@@ -777,7 +786,10 @@ const Room = () => {
 
           {/* Queue List */}
           <Box sx={{ flex: 1, overflow: "auto", px: 1.5, py: 1, display: "flex", flexDirection: "column", gap: 1 }}>
-            {queue.map((video, index) => (
+            {queue.map((video, index) => {
+              const hue = video.colorHue;
+              const hasColor = roomQueueColorsEnabled && hue != null;
+              return (
               <Box
                 key={index}
                 sx={{
@@ -786,12 +798,20 @@ const Room = () => {
                   gap: 2,
                   p: 1,
                   borderRadius: 1.5,
-                  background: "rgba(139, 92, 246, 0.05)",
-                  border: "1px solid rgba(148, 163, 184, 0.05)",
+                  background: hasColor
+                    ? `linear-gradient(135deg, hsla(${hue}, 66.6%, 66.6%, 0.1) 0%, hsla(${hue}, 66.6%, 66.6%, 0.06) 100%)`
+                    : "rgba(139, 92, 246, 0.05)",
+                  border: hasColor
+                    ? `1px solid hsla(${hue}, 66.6%, 66.6%, 0.2)`
+                    : "1px solid rgba(148, 163, 184, 0.05)",
                   transition: "all 0.2s ease",
                   "&:hover": {
-                    background: "rgba(139, 92, 246, 0.1)",
-                    border: "1px solid rgba(139, 92, 246, 0.2)",
+                    background: hasColor
+                      ? `linear-gradient(135deg, hsla(${hue}, 66.6%, 66.6%, 0.28) 0%, hsla(${hue}, 66.6%, 66.6%, 0.1) 100%)`
+                      : "rgba(139, 92, 246, 0.1)",
+                    border: hasColor
+                      ? `1px solid hsla(${hue}, 66.6%, 66.6%, 0.35)`
+                      : "1px solid rgba(139, 92, 246, 0.2)",
                   },
                 }}
               >
@@ -837,7 +857,8 @@ const Room = () => {
                   </Typography>
                 </Box>
               </Box>
-            ))}
+              );
+            })}
 
             {/* Empty State */}
             {queue.length === 0 && (
@@ -1016,6 +1037,38 @@ const Room = () => {
             </Typography>
           </Box>
 
+          {/* Queue Color Highlighting Toggle */}
+          <Box
+            sx={{
+              mb: 3,
+              p: 2,
+              background: "rgba(139, 92, 246, 0.05)",
+              borderRadius: 2,
+              border: "1px solid rgba(148, 163, 184, 0.05)",
+            }}
+          >
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={roomQueueColorsEnabled}
+                  onChange={(e) => handleToggleRoomQueueColors(e.target.checked)}
+                  sx={{
+                    "& .MuiSwitch-switchBase.Mui-checked": {
+                      color: "#8B5CF6",
+                    },
+                    "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
+                      backgroundColor: "#8B5CF6",
+                    },
+                  }}
+                />
+              }
+              label="Queue color highlighting"
+            />
+            <Typography variant="caption" sx={{ display: "block", color: "text.secondary", mt: 1 }}>
+              Show user-specific color highlights on queue items.
+            </Typography>
+          </Box>
+
           {/* Controllers List */}
           <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
             Connected Controllers ({controllers.length})
@@ -1051,6 +1104,21 @@ const Room = () => {
                       : "1px solid rgba(239, 68, 68, 0.2)",
                   }}
                 >
+                  <Box
+                    sx={{
+                      width: 10,
+                      height: 10,
+                      borderRadius: "50%",
+                      flexShrink: 0,
+                      mr: 1.5,
+                      background: controller.colorHue != null
+                        ? `hsl(${controller.colorHue}, 66.6%, 66.6%)`
+                        : "rgba(148, 163, 184, 0.4)",
+                      boxShadow: controller.colorHue != null
+                        ? `0 0 6px hsla(${controller.colorHue}, 66.6%, 66.6%, 0.5)`
+                        : "none",
+                    }}
+                  />
                   <ListItemText
                     primary={controller.name}
                     secondary={
