@@ -1,4 +1,4 @@
-# YouTube Karaoke Together
+# [YouTube Karaoke Together](https://kae.zhg.au)
 
 A collaborative YouTube video queuing system that allows multiple users to watch and queue videos together. The system consists of a main room with a YouTube player and a queue display, and a mobile-friendly control panel for searching and adding videos to the queue.
 
