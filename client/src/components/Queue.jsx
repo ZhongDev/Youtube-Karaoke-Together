@@ -25,6 +25,129 @@ import {
 import { useParams } from "react-router-dom";
 import useSocket from "../hooks/useSocket";
 
+// Defined outside Queue so its identity is stable across renders. If this were
+// declared inside Queue, every parent re-render (e.g. the 1Hz playback-updated
+// event) would produce a brand-new component type, causing React to unmount
+// and remount every card's DOM node — which wipes the user's text selection.
+const VideoCard = React.memo(function VideoCard({
+  video,
+  onAction,
+  actionIcon,
+  actionColor,
+  actionBgColor,
+  isNowPlaying = false,
+  queueColorsEnabled = true,
+  isConnected,
+  controllerKey,
+}) {
+  const hue = video.colorHue;
+  const hasColor = queueColorsEnabled && !isNowPlaying && hue != null;
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        p: 2,
+        borderRadius: 2,
+        background: isNowPlaying
+          ? "transparent"
+          : hasColor
+            ? `linear-gradient(135deg, hsla(${hue}, 66.6%, 66.6%, 0.1) 0%, hsla(${hue}, 66.6%, 66.6%, 0.06) 100%)`
+            : "rgba(139, 92, 246, 0.05)",
+        border: isNowPlaying
+          ? "none"
+          : hasColor
+            ? `1px solid hsla(${hue}, 66.6%, 66.6%, 0.2)`
+            : "1px solid rgba(148, 163, 184, 0.08)",
+        transition: "background 0.2s ease, border 0.2s ease",
+        "&:hover": isNowPlaying ? {} : {
+          background: hasColor
+            ? `linear-gradient(135deg, hsla(${hue}, 66.6%, 66.6%, 0.28) 0%, hsla(${hue}, 66.6%, 66.6%, 0.1) 100%)`
+            : "rgba(139, 92, 246, 0.1)",
+          border: hasColor
+            ? `1px solid hsla(${hue}, 66.6%, 66.6%, 0.35)`
+            : "1px solid rgba(139, 92, 246, 0.2)",
+        },
+      }}
+    >
+      {/* Thumbnail */}
+      <Box
+        component="img"
+        src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
+        alt={video.title}
+        sx={{
+          width: 100,
+          height: 56,
+          borderRadius: 1.5,
+          objectFit: "cover",
+          flexShrink: 0,
+        }}
+      />
+
+      {/* Content */}
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 500,
+            color: "text.primary",
+            mb: 0.5,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            lineHeight: 1.4,
+          }}
+        >
+          {video.title}
+        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+            Added by: {video.addedBy}
+          </Typography>
+          {video.isPlaylist && (
+            <Chip
+              size="small"
+              icon={<PlaylistIcon sx={{ fontSize: 12 }} />}
+              label="Playlist"
+              sx={{
+                height: 18,
+                fontSize: "0.65rem",
+                background: "rgba(139, 92, 246, 0.2)",
+                color: "#A78BFA",
+                border: "none",
+                "& .MuiChip-icon": { color: "#A78BFA" },
+              }}
+            />
+          )}
+        </Box>
+      </Box>
+
+      {/* Action Button */}
+      <IconButton
+        onClick={onAction}
+        disabled={!isConnected || !controllerKey}
+        sx={{
+          flexShrink: 0,
+          color: actionColor,
+          background: actionBgColor,
+          "&:hover": {
+            background: actionBgColor.replace("0.1", "0.2"),
+          },
+          "&:disabled": {
+            color: "rgba(148, 163, 184, 0.3)",
+            background: "rgba(148, 163, 184, 0.05)",
+          },
+        }}
+      >
+        {actionIcon}
+      </IconButton>
+    </Box>
+  );
+});
+
 const Queue = ({ controllerKey, queueColorsEnabled = true }) => {
   const { roomId } = useParams();
   const [queue, setQueue] = useState([]);
@@ -178,116 +301,6 @@ const Queue = ({ controllerKey, queueColorsEnabled = true }) => {
     return `${m}:${s}`;
   };
 
-  // Reusable Video Card Component
-  const VideoCard = ({ video, onAction, actionIcon, actionColor, actionBgColor, isNowPlaying = false }) => {
-    const hue = video.colorHue;
-    const hasColor = queueColorsEnabled && !isNowPlaying && hue != null;
-    return (
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        gap: 2,
-        p: 2,
-        borderRadius: 2,
-        background: isNowPlaying
-          ? "transparent"
-          : hasColor
-            ? `linear-gradient(135deg, hsla(${hue}, 66.6%, 66.6%, 0.1) 0%, hsla(${hue}, 66.6%, 66.6%, 0.06) 100%)`
-            : "rgba(139, 92, 246, 0.05)",
-        border: isNowPlaying
-          ? "none"
-          : hasColor
-            ? `1px solid hsla(${hue}, 66.6%, 66.6%, 0.2)`
-            : "1px solid rgba(148, 163, 184, 0.08)",
-        transition: "background 0.2s ease, border 0.2s ease",
-        "&:hover": isNowPlaying ? {} : {
-          background: hasColor
-            ? `linear-gradient(135deg, hsla(${hue}, 66.6%, 66.6%, 0.28) 0%, hsla(${hue}, 66.6%, 66.6%, 0.1) 100%)`
-            : "rgba(139, 92, 246, 0.1)",
-          border: hasColor
-            ? `1px solid hsla(${hue}, 66.6%, 66.6%, 0.35)`
-            : "1px solid rgba(139, 92, 246, 0.2)",
-        },
-      }}
-    >
-      {/* Thumbnail */}
-      <Box
-        component="img"
-        src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
-        alt={video.title}
-        sx={{
-          width: 100,
-          height: 56,
-          borderRadius: 1.5,
-          objectFit: "cover",
-          flexShrink: 0,
-        }}
-      />
-
-      {/* Content */}
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography
-          variant="body2"
-          sx={{
-            fontWeight: 500,
-            color: "text.primary",
-            mb: 0.5,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            lineHeight: 1.4,
-          }}
-        >
-          {video.title}
-        </Typography>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-          <Typography variant="caption" sx={{ color: "text.secondary" }}>
-            Added by: {video.addedBy}
-          </Typography>
-          {video.isPlaylist && (
-            <Chip
-              size="small"
-              icon={<PlaylistIcon sx={{ fontSize: 12 }} />}
-              label="Playlist"
-              sx={{
-                height: 18,
-                fontSize: "0.65rem",
-                background: "rgba(139, 92, 246, 0.2)",
-                color: "#A78BFA",
-                border: "none",
-                "& .MuiChip-icon": { color: "#A78BFA" },
-              }}
-            />
-          )}
-        </Box>
-      </Box>
-
-      {/* Action Button */}
-      <IconButton
-        onClick={onAction}
-        disabled={!isConnected || !controllerKey}
-        sx={{
-          flexShrink: 0,
-          color: actionColor,
-          background: actionBgColor,
-          "&:hover": {
-            background: actionBgColor.replace("0.1", "0.2"),
-          },
-          "&:disabled": {
-            color: "rgba(148, 163, 184, 0.3)",
-            background: "rgba(148, 163, 184, 0.05)",
-          },
-        }}
-      >
-        {actionIcon}
-      </IconButton>
-    </Box>
-    );
-  };
-
   return (
     <Box sx={{ p: 2, maxWidth: 600, mx: "auto" }}>
       {/* Main Container */}
@@ -395,6 +408,9 @@ const Queue = ({ controllerKey, queueColorsEnabled = true }) => {
                     actionColor="#EC4899"
                     actionBgColor="rgba(236, 72, 153, 0.1)"
                     isNowPlaying
+                    queueColorsEnabled={queueColorsEnabled}
+                    isConnected={isConnected}
+                    controllerKey={controllerKey}
                   />
 
                   {/* Progress Bar */}
@@ -491,6 +507,9 @@ const Queue = ({ controllerKey, queueColorsEnabled = true }) => {
                     actionIcon={<DeleteIcon fontSize="small" />}
                     actionColor="#EF4444"
                     actionBgColor="rgba(239, 68, 68, 0.1)"
+                    queueColorsEnabled={queueColorsEnabled}
+                    isConnected={isConnected}
+                    controllerKey={controllerKey}
                   />
                 </motion.div>
               ))}
