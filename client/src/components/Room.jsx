@@ -30,7 +30,7 @@ import BlockIcon from "@mui/icons-material/Block";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import Tooltip from "@mui/material/Tooltip";
 import useSocket from "../hooks/useSocket";
-import { getBackendUrl, getStoredPlayerKey, storePlayerKey, STORAGE_KEYS } from "../config";
+import { getBackendUrl, getStoredPlayerKey, storePlayerKey, STORAGE_KEYS, decodeHtmlEntities } from "../config";
 
 const Room = () => {
   const { roomId } = useParams();
@@ -832,7 +832,7 @@ const Room = () => {
                 <Box
                   component="img"
                   src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
-                  alt={video.title}
+                  alt={decodeHtmlEntities(video.title)}
                   sx={{
                     width: 56,
                     height: 32,
@@ -856,7 +856,7 @@ const Room = () => {
                       lineHeight: 1.3,
                     }}
                   >
-                    {video.title}
+                    {decodeHtmlEntities(video.title)}
                   </Typography>
                   <Typography
                     variant="caption"

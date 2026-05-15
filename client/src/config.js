@@ -84,6 +84,22 @@ export const STORAGE_KEYS = {
 };
 
 /**
+ * Decode HTML entity references in a string. Safe for use on values like
+ * YouTube video titles, which the Data API v3 returns with entities still
+ * encoded (e.g. `&#39;`, `&amp;`, `&quot;`). Idempotent — strings without
+ * `&` are returned as-is. Uses a detached <textarea> so the browser handles
+ * all named/decimal/hex entities without any HTML being parsed as markup.
+ */
+export function decodeHtmlEntities(text) {
+    if (typeof text !== 'string' || text.length === 0) return text;
+    if (text.indexOf('&') === -1) return text;
+    if (typeof document === 'undefined') return text;
+    const ta = document.createElement('textarea');
+    ta.innerHTML = text;
+    return ta.value;
+}
+
+/**
  * Normalize a preferred username stored in localStorage.
  * Removes room collision suffixes like "Name [2]" and strips bracket chars.
  */
@@ -154,6 +170,7 @@ export default {
     getFrontendOrigin,
     isDevMode,
     STORAGE_KEYS,
+    decodeHtmlEntities,
     normalizeStoredUsername,
     getStoredPreferredUsername,
     getStoredControllerKey,

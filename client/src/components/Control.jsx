@@ -40,6 +40,7 @@ import {
   STORAGE_KEYS,
   getStoredPreferredUsername,
   normalizeStoredUsername,
+  decodeHtmlEntities,
 } from "../config";
 
 // Helper to get localStorage boolean with default
@@ -322,8 +323,8 @@ const Control = () => {
 
       const transformedResults = data.items.map((item) => ({
         id: item.id.videoId || item.id.playlistId,
-        title: item.snippet.title,
-        channelTitle: item.snippet.channelTitle,
+        title: decodeHtmlEntities(item.snippet.title),
+        channelTitle: decodeHtmlEntities(item.snippet.channelTitle),
         isPlaylist: !!item.id.playlistId,
       }));
 
@@ -393,8 +394,8 @@ const Control = () => {
 
       const transformedResults = data.items.map((item) => ({
         id: item.id.videoId || item.id.playlistId,
-        title: item.snippet.title,
-        channelTitle: item.snippet.channelTitle,
+        title: decodeHtmlEntities(item.snippet.title),
+        channelTitle: decodeHtmlEntities(item.snippet.channelTitle),
         isPlaylist: !!item.id.playlistId,
       }));
 
@@ -814,7 +815,7 @@ const Control = () => {
               Now Playing
             </Typography>
             <Typography variant="body1" sx={{ fontWeight: 500, mb: 2 }}>
-              {currentVideo.title}
+              {decodeHtmlEntities(currentVideo.title)}
             </Typography>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
               <Typography variant="caption" sx={{ color: "text.secondary", minWidth: 40 }}>

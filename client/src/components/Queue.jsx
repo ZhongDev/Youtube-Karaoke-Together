@@ -26,6 +26,7 @@ import {
 } from "@mui/icons-material";
 import { useParams } from "react-router-dom";
 import useSocket from "../hooks/useSocket";
+import { decodeHtmlEntities } from "../config";
 
 // Matches any Hiragana, Katakana (full + half width), or CJK Unified Ideograph.
 // Kanji are shared with Chinese, but for karaoke-title detection this is
@@ -60,6 +61,7 @@ const VideoCard = React.memo(function VideoCard({
 }) {
   const hue = video.colorHue;
   const hasColor = queueColorsEnabled && !isNowPlaying && hue != null;
+  const displayTitle = decodeHtmlEntities(video.title);
   return (
     <Box
       sx={{
@@ -93,7 +95,7 @@ const VideoCard = React.memo(function VideoCard({
       <Box
         component="img"
         src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
-        alt={video.title}
+        alt={displayTitle}
         sx={{
           width: 100,
           height: 56,
@@ -119,7 +121,7 @@ const VideoCard = React.memo(function VideoCard({
             lineHeight: 1.4,
           }}
         >
-          {video.title}
+          {displayTitle}
         </Typography>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
           <Typography variant="caption" sx={{ color: "text.secondary" }}>
@@ -428,7 +430,7 @@ const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled =
                     </Typography>
                     <Button
                       component="a"
-                      href={buildLyricsSearchUrl(currentVideo.title, lyricsRomajiEnabled)}
+                      href={buildLyricsSearchUrl(decodeHtmlEntities(currentVideo.title), lyricsRomajiEnabled)}
                       target="_blank"
                       rel="noopener noreferrer"
                       size="small"
@@ -612,7 +614,7 @@ const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled =
         <DialogTitle sx={{ fontWeight: 600, pb: 1 }}>Remove from Queue</DialogTitle>
         <DialogContent>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Are you sure you want to remove "{videoToDelete?.video.title}" from the queue?
+            Are you sure you want to remove "{decodeHtmlEntities(videoToDelete?.video.title)}" from the queue?
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2, pt: 1 }}>
@@ -657,7 +659,7 @@ const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled =
         <DialogTitle sx={{ fontWeight: 600, pb: 1 }}>Skip Current Song</DialogTitle>
         <DialogContent>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Are you sure you want to skip "{currentVideo?.title}" and move to the next song?
+            Are you sure you want to skip "{decodeHtmlEntities(currentVideo?.title)}" and move to the next song?
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2, pt: 1 }}>
