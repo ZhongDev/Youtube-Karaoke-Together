@@ -78,6 +78,7 @@ const Control = () => {
   const [colorHue, setColorHue] = useState(null);
   const [queueColorsEnabled, setQueueColorsEnabled] = useState(() => getStorageBool(STORAGE_KEYS.QUEUE_COLORS_ENABLED));
   const [bgColorEnabled, setBgColorEnabled] = useState(() => getStorageBool(STORAGE_KEYS.BG_COLOR_ENABLED));
+  const [lyricsRomajiEnabled, setLyricsRomajiEnabled] = useState(() => getStorageBool(STORAGE_KEYS.LYRICS_ROMAJI_ENABLED, false));
 
   const [currentTab, setCurrentTab] = useState(0);
   const [hasSearched, setHasSearched] = useState(false);
@@ -464,6 +465,11 @@ const Control = () => {
   const handleToggleQueueColors = (enabled) => {
     setQueueColorsEnabled(enabled);
     localStorage.setItem(STORAGE_KEYS.QUEUE_COLORS_ENABLED, String(enabled));
+  };
+
+  const handleToggleLyricsRomaji = (enabled) => {
+    setLyricsRomajiEnabled(enabled);
+    localStorage.setItem(STORAGE_KEYS.LYRICS_ROMAJI_ENABLED, String(enabled));
   };
 
   const handleToggleBgColor = (enabled) => {
@@ -957,7 +963,13 @@ const Control = () => {
       </Dialog>
 
       {currentTab === 0 && renderSearchTab()}
-      {currentTab === 1 && <Queue controllerKey={controllerKey} queueColorsEnabled={queueColorsEnabled} />}
+      {currentTab === 1 && (
+        <Queue
+          controllerKey={controllerKey}
+          queueColorsEnabled={queueColorsEnabled}
+          lyricsRomajiEnabled={lyricsRomajiEnabled}
+        />
+      )}
       {currentTab === 2 && renderControlsTab()}
       {currentTab === 3 && (
         <Settings
@@ -965,6 +977,8 @@ const Control = () => {
           onToggleQueueColors={handleToggleQueueColors}
           bgColorEnabled={bgColorEnabled}
           onToggleBgColor={handleToggleBgColor}
+          lyricsRomajiEnabled={lyricsRomajiEnabled}
+          onToggleLyricsRomaji={handleToggleLyricsRomaji}
           colorHue={colorHue}
           onColorChange={handleColorChange}
           onColorCommit={handleColorCommit}

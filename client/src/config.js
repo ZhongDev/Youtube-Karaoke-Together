@@ -80,6 +80,7 @@ export const STORAGE_KEYS = {
     QUEUE_COLORS_ENABLED: 'ytkt_queueColorsEnabled',
     BG_COLOR_ENABLED: 'ytkt_bgColorEnabled',
     ROOM_QUEUE_COLORS_ENABLED: 'ytkt_roomQueueColorsEnabled',
+    LYRICS_ROMAJI_ENABLED: 'ytkt_lyricsRomajiEnabled',
 };
 
 /**

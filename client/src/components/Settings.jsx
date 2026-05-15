@@ -24,7 +24,17 @@ import {
 } from "../config";
 import useSocket from "../hooks/useSocket";
 
-const Settings = ({ queueColorsEnabled, onToggleQueueColors, bgColorEnabled, onToggleBgColor, colorHue, onColorChange, onColorCommit }) => {
+const Settings = ({
+  queueColorsEnabled,
+  onToggleQueueColors,
+  bgColorEnabled,
+  onToggleBgColor,
+  lyricsRomajiEnabled,
+  onToggleLyricsRomaji,
+  colorHue,
+  onColorChange,
+  onColorCommit,
+}) => {
   const { roomId } = useParams();
   const [username, setUsername] = useState(() => {
     return getStoredPreferredUsername();
@@ -415,6 +425,43 @@ const Settings = ({ queueColorsEnabled, onToggleQueueColors, bgColorEnabled, onT
               />
               <Typography variant="caption" sx={{ display: "block", color: "text.secondary", mt: 0.5 }}>
                 Apply a subtle background tint based on your assigned color.
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Lyrics Search Settings */}
+          <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid rgba(148, 163, 184, 0.1)" }}>
+            <Typography variant="subtitle2" sx={{ mb: 2, color: "text.secondary" }}>
+              Lyrics Search
+            </Typography>
+
+            <Box
+              sx={{
+                p: 2,
+                background: "rgba(139, 92, 246, 0.05)",
+                borderRadius: 2,
+                border: "1px solid rgba(148, 163, 184, 0.05)",
+              }}
+            >
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={!!lyricsRomajiEnabled}
+                    onChange={(e) => onToggleLyricsRomaji(e.target.checked)}
+                    sx={{
+                      "& .MuiSwitch-switchBase.Mui-checked": {
+                        color: "#8B5CF6",
+                      },
+                      "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
+                        backgroundColor: "#8B5CF6",
+                      },
+                    }}
+                  />
+                }
+                label="Detect Japanese for romaji lyrics"
+              />
+              <Typography variant="caption" sx={{ display: "block", color: "text.secondary", mt: 0.5 }}>
+                When the current song's title contains Japanese characters, append "romaji" to the lyrics search query.
               </Typography>
             </Box>
           </Box>

@@ -21,9 +21,27 @@ import {
   Delete as DeleteIcon,
   SkipNext as SkipNextIcon,
   QueueMusic as QueueMusicIcon,
+  Lyrics as LyricsIcon,
+  OpenInNew as OpenInNewIcon,
 } from "@mui/icons-material";
 import { useParams } from "react-router-dom";
 import useSocket from "../hooks/useSocket";
+
+// Matches any Hiragana, Katakana (full + half width), or CJK Unified Ideograph.
+// Kanji are shared with Chinese, but for karaoke-title detection this is
+// intentional: most Japanese song titles are kanji-only or mixed kana/kanji.
+const JAPANESE_CHAR_REGEX = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF65-\uFF9F]/;
+
+const containsJapanese = (text) => typeof text === "string" && JAPANESE_CHAR_REGEX.test(text);
+
+const buildLyricsSearchUrl = (title, romajiEnabled) => {
+  const safeTitle = (title || "").trim();
+  const parts = [safeTitle];
+  if (romajiEnabled && containsJapanese(safeTitle)) parts.push("romaji");
+  parts.push("lyrics");
+  const query = parts.join(" ");
+  return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+};
 
 // Defined outside Queue so its identity is stable across renders. If this were
 // declared inside Queue, every parent re-render (e.g. the 1Hz playback-updated
@@ -148,7 +166,7 @@ const VideoCard = React.memo(function VideoCard({
   );
 });
 
-const Queue = ({ controllerKey, queueColorsEnabled = true }) => {
+const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled = false }) => {
   const { roomId } = useParams();
   const [queue, setQueue] = useState([]);
   const [currentVideo, setCurrentVideo] = useState(null);
@@ -388,18 +406,55 @@ const Queue = ({ controllerKey, queueColorsEnabled = true }) => {
                     border: "1px solid rgba(139, 92, 246, 0.2)",
                   }}
                 >
-                  <Typography
-                    variant="overline"
+                  <Box
                     sx={{
-                      color: "#8B5CF6",
-                      fontWeight: 700,
-                      letterSpacing: 1,
-                      display: "block",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 1,
                       mb: 1.5,
                     }}
                   >
-                    Now Playing
-                  </Typography>
+                    <Typography
+                      variant="overline"
+                      sx={{
+                        color: "#8B5CF6",
+                        fontWeight: 700,
+                        letterSpacing: 1,
+                        lineHeight: 1,
+                      }}
+                    >
+                      Now Playing
+                    </Typography>
+                    <Button
+                      component="a"
+                      href={buildLyricsSearchUrl(currentVideo.title, lyricsRomajiEnabled)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      size="small"
+                      startIcon={<LyricsIcon sx={{ fontSize: 14 }} />}
+                      endIcon={<OpenInNewIcon sx={{ fontSize: 12 }} />}
+                      sx={{
+                        textTransform: "none",
+                        fontSize: "0.7rem",
+                        fontWeight: 600,
+                        letterSpacing: 0.3,
+                        minHeight: 0,
+                        py: 0.25,
+                        px: 1.25,
+                        borderRadius: 999,
+                        color: "#A78BFA",
+                        background: "rgba(139, 92, 246, 0.12)",
+                        border: "1px solid rgba(139, 92, 246, 0.25)",
+                        "&:hover": {
+                          background: "rgba(139, 92, 246, 0.22)",
+                          border: "1px solid rgba(139, 92, 246, 0.4)",
+                        },
+                      }}
+                    >
+                      Lyrics
+                    </Button>
+                  </Box>
 
                   <VideoCard
                     video={currentVideo}
