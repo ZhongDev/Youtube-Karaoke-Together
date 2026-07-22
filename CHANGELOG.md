@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Released paused-checkpoint enforcement after restoration so the room player’s native controls can resume playback normally
+- Enlarged controller queue reorder handles to a 48×48-pixel touch target for more reliable mobile dragging
 
 ### Documentation
 
