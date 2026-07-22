@@ -221,16 +221,21 @@ const SortableQueueItem = ({ video, disabled, children }) => {
       {...listeners}
       aria-label={`Reorder ${displayTitle}`}
       disabled={disabled}
-      size="small"
       sx={{
         flexShrink: 0,
+        width: 48,
+        height: 48,
         touchAction: "none",
         cursor: disabled ? "default" : "grab",
         color: disabled ? "text.disabled" : "text.secondary",
+        background: disabled ? "transparent" : "rgba(148, 163, 184, 0.08)",
+        "&:hover": {
+          background: disabled ? "transparent" : "rgba(139, 92, 246, 0.16)",
+        },
         "&:active": { cursor: "grabbing" },
       }}
     >
-      <DragIndicatorIcon />
+      <DragIndicatorIcon sx={{ fontSize: 28 }} />
     </IconButton>
   );
   return (
@@ -716,7 +721,7 @@ const Queue = ({ controllerKey, controllerId, queueColorsEnabled = true, lyricsR
                         </SortableQueueItem>;
                       }
                       return <QueueItemTransition key={video.queueId || `${video.id}-${index}`}>
-                        {card(<Box aria-hidden sx={{ width: 34, flexShrink: 0 }} />)}
+                        {card(<Box aria-hidden sx={{ width: 48, flexShrink: 0 }} />)}
                       </QueueItemTransition>;
                     })}
                   </AnimatePresence>
