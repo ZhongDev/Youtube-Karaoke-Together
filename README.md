@@ -1,275 +1,181 @@
 # [YouTube Karaoke Together](https://kae.zhg.au)
 
-A collaborative YouTube video queuing system that allows multiple users to watch and queue videos together. The system consists of a main room with a YouTube player and a queue display, and a mobile-friendly control panel for searching and adding videos to the queue.
+YouTube Karaoke Together is a collaborative YouTube queue with a shared room/player display and mobile controllers. Version 3 adds durable SQLite room recovery, bounded playlist expansion, an authenticated operations dashboard, quota metering, and versioned privacy consent.
 
 ## Features
 
-- Create unique rooms for watching YouTube videos together
-- Real-time video queue management
-- Mobile-friendly control panel accessible via QR code
-- YouTube video search and queue functionality
-- Synchronized video playback across all users
-- **YouTube API Compliant** - Full legal compliance with YouTube ToS
-- **Privacy-First Design** - Comprehensive privacy protection
-- **Terms of Service Protection** - Clear user agreements
-- **Round-Robin Queueing (Optional)** - Fair turn rotation between participants, toggleable from the Controls tab
-- **Secure Room Control** - Token-based authentication for room management
+- Shared YouTube player with realtime queue and playback state
+- QR-based mobile controllers with optional round-robin ordering
+- Server-validated video and playlist additions (up to 50 playable playlist entries per add)
+- Unfiltered YouTube search (`safeSearch=none`); YouTube availability, age, region, and embed restrictions still apply
+- Stable queue-item IDs and duplicate-safe skip/auto-advance
+- SQLite-backed room, queue, controller, settings, and playback recovery
+- Inactivity-based room closure and minimized room/video history for no more than 30 days
+- Google-authenticated administrator dashboard for active rooms, recent history, YouTube API usage, administrators, and security audit events
+- Versioned Terms/privacy acceptance, including one-time migration for browsers that previously selected “Don’t ask me again”
 
-## Security Model
+## Requirements
 
-The application uses a token-based authentication system:
+- Node.js 22 LTS (minimum supported by the current toolchain: Node 20.19 or 22.12)
+- npm 10+
+- A YouTube Data API v3 key
+- A Google OAuth web client ID if the administrator dashboard is enabled
+- One writable application instance for the SQLite deployment
 
-- **Player Key**: Generated when a room is created. Used by the room screen for admin actions and playback updates. Stored in the room URL and localStorage.
-- **Control Master Key**: Embedded in the QR code URL. Required to register new controllers.
-- **Controller Keys**: Issued to each user when they scan the QR code and enter their name. Required for all queue operations.
-
-Room admins (the room screen) can:
-- View all registered controllers
-- Enable/disable individual controllers
-- Remove controllers
-- Toggle whether new controller registrations are allowed
-- Rename controllers (updates existing queue entries)
-
-## Prerequisites
-
-- Node.js 18+
-- npm 9+
-- YouTube Data API key
-
-## Setup
-
-### 1. Clone the repository
+## Install and configure
 
 ```bash
-git clone https://github.com/yourusername/youtube-karaoke-together.git
-cd youtube-karaoke-together
-```
-
-### 2. Install dependencies
-
-```bash
-# Install server dependencies
+git clone https://github.com/ZhongDev/Youtube-Karaoke-Together.git
+cd Youtube-Karaoke-Together
 npm install
-
-# Install client dependencies
-cd client
-npm install
-cd ..
-```
-
-### 3. Configure environment variables
-
-#### Server (.env)
-
-```bash
+npm --prefix client install
 cp env.example .env
+cp client/.env.example client/.env
 ```
 
-Edit `.env` and set:
+Required server settings in `.env`:
 
-```bash
-PORT=8080
+```dotenv
 NODE_ENV=development
+PORT=8080
 PUBLIC_FRONTEND_ORIGIN=http://localhost:3000
-YOUTUBE_API_KEY=your_api_key_here
-
-### 3a. Configure limits (optional)
-
-The server uses `server-limits.json` for capacity and payload bounds. Defaults are generous but finite.
-
-```json
-{
-  "maxRooms": 5000,
-  "maxControllersPerRoom": 500,
-  "maxQueueLengthPerRoom": 1000,
-  "maxUsernameLength": 50,
-  "maxVideoTitleLength": 200,
-  "maxVideoIdLength": 64,
-  "maxSearchQueryLength": 200,
-  "maxHttpBufferSize": 65536
-}
+YOUTUBE_API_KEY=replace_me
+TOKEN_PEPPER=replace_with_at_least_32_random_characters
+GOOGLE_CLIENT_ID=replace_me.apps.googleusercontent.com
 ```
 
-To override the path:
+For local administrator sign-in, put the same web client ID in `client/.env`:
 
-```bash
-LIMITS_CONFIG_PATH=/path/to/server-limits.json
-```
-```
-
-#### Client (client/.env) - Development only
-
-```bash
-cd client
-cp .env.example .env
-```
-
-Edit `client/.env`:
-
-```bash
+```dotenv
 VITE_DEV=true
 VITE_BACKEND_URL=http://localhost:8080
+VITE_GOOGLE_CLIENT_ID=replace_me.apps.googleusercontent.com
 ```
 
-### 4. Get a YouTube Data API key
+`TOKEN_PEPPER` is mandatory and must contain at least 32 characters in production. Preserve it across restarts or persisted room/controller credentials will no longer validate.
 
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select an existing one
-3. Enable YouTube Data API v3
-4. Create credentials (API key)
-5. Paste it into your `.env` file
+See [env.example](env.example) and [server-limits.json](server-limits.json) for all runtime and capacity settings.
 
-## Running the Application
-
-### Development
+## Run and verify
 
 ```bash
-# Terminal 1: Start the server
-npm run dev
-
-# Terminal 2: Start the client
-cd client
-npm run dev
-```
-
-Or run both concurrently:
-
-```bash
+# Server and Vite client together
 npm run dev:full
+
+# Complete automated checks
+npm run check
+
+# Individual commands
+npm test
+npm run test:client
+npm --prefix client run build
+npm audit --omit=dev
+npm --prefix client audit --omit=dev
 ```
 
-Open `http://localhost:3000` in your browser.
+The same install, test, build, and high-severity audit gate runs in GitHub Actions on Node 22.
 
-### Production
+The development UI runs at `http://localhost:3000`; the API and Socket.IO server default to `http://localhost:8080`.
 
-#### Server
+## Administrator onboarding
+
+1. Configure a Google OAuth web application and add the deployed frontend URL as an authorized JavaScript origin.
+2. Set `GOOGLE_CLIENT_ID` on the server and `VITE_GOOGLE_CLIENT_ID` when building the client. Administrator sign-in requests identity only; it does not request YouTube account scopes.
+3. While the database has no owner, generate a short-lived, single-use bootstrap code:
+
+   ```bash
+   npm run admin:bootstrap
+   ```
+
+4. Open `/admin/bootstrap`, enter the code, and complete Google sign-in. Subsequent administrators must use an owner-created invitation from the dashboard.
+
+Roles are `owner`, `admin`, and `viewer`. Owners manage invitations, roles, account status, and sessions; the last enabled owner cannot be demoted or disabled. If all owner access is accidentally lost, an operator with server/database access can recover an existing linked identity:
 
 ```bash
+npm run admin:recover -- owner@example.com
+```
+
+This recovery action revokes that user’s sessions and creates an audit event; it does not create a network login backdoor.
+
+## Persistence, retention, and backups
+
+The default database is `data/youtube-karaoke.sqlite`. SQLite WAL mode, foreign keys, schema migrations, hashed bearer credentials, transactional structural writes, and periodic playback checkpoints are enabled.
+
+- Active rooms close after 24 hours without authenticated room activity.
+- Active room state is restored after restart without advancing playback by server downtime.
+- On closure, controller identity/display-name rows and registration credentials are deleted or revoked.
+- Minimized room/video history and locally metered YouTube API usage are live for at most 28 days, leaving headroom below the 30-calendar-day API-data limit for operational backup rotation.
+- Search queries, raw tokens, IP-address histories, user-agent histories, and controller names are not retained in closed-room history.
+- Active YouTube metadata approaching the retention boundary is refreshed through the API or replaced with an unavailable marker.
+- A room creator can permanently delete an active room and its correlated stored data from Room Admin by confirming the full room ID; contact-based privacy requests remain available for other cases.
+
+Production enables daily backups by default in `backups/`; set `AUTO_BACKUPS=false` to use an external backup system. Application-managed backups older than 24 hours are removed after a successful replacement. External/manual backup systems must enforce equivalent data-age and deletion guarantees rather than adding another 30-day retention window. Operational commands:
+
+```bash
+npm run db:integrity
+npm run db:backup
+```
+
+To restore, stop the server, preserve the current database and WAL files, replace the database with a tested backup using the same file permissions/owner, run `npm run db:integrity`, and then start the server. Startup runs retention/expiry maintenance before reporting ready. Practice this procedure against a copy before relying on it in production.
+
+SQLite assumes a single writable Node process. The repository/service boundaries and portable schema are intended to make a later PostgreSQL migration possible; do not place the current SQLite file behind multiple writers.
+
+## YouTube API quota dashboard
+
+Every YouTube request is routed through the metered service and records method, quota bucket, configured cost, result, and latency—never the API key itself. The v3 catalog follows the current separate-bucket model:
+
+- `search.list`: one call from the default 100-search-calls/day bucket
+- `videos.list` and `playlistItems.list`: one unit per request from the default 10,000 general-units/day bucket
+- `videos.insert`: separately modeled as one call from the default 100-video-uploads/day bucket, though this application does not upload videos
+- Every page and failed/invalid request is counted
+- Quota days use midnight Pacific Time
+
+This catalog reflects Google's granular quota model documented by the [official YouTube Data API quota calculator](https://developers.google.com/youtube/v3/determine_quota_cost). Dashboard values are local estimates. The Google Cloud Console remains authoritative, particularly for custom quota allocations or future Google policy changes.
+
+## Architecture
+
+```text
+server.js                    startup and graceful shutdown
+src/server/
+  config.js                  environment, origins, and limits
+  createServer.js            Express/Socket.IO composition and routes
+  database.js                migrations, repositories, history, admin data
+  roomService.js             room/queue/playback/controller invariants
+  youtubeService.js          YouTube requests, playlists, refresh, quota meter
+  adminService.js            Google identities, bootstrap, sessions, RBAC
+  socketHandlers.js          validated realtime transport boundary
+client/src/
+  components/                public route/page composition
+  features/controller/       search and playback-control features
+  features/admin/            login, dashboard panels, API client
+  features/consent/          versioned local consent migration
+  pages/                     lazy-loaded route shells
+```
+
+The large room and controller routes are lazy loaded. `Control.jsx` now delegates search, queue, controls, settings, consent, and realtime helpers to feature-owned modules instead of owning the whole UI and network flow.
+
+## Security and privacy notes
+
+- Exact-origin CORS is used for HTTP and Socket.IO; lookalike domains are rejected.
+- New QR registration capabilities travel in URL fragments (not HTTP requests or proxy logs) and are removed from the visible URL after session storage; the server stores only credential hashes. Legacy query credentials are also stripped immediately.
+- Registration links are short-lived; controller and administrator sessions are revocable.
+- Administrator cookies are `HttpOnly`, `Secure` in production, and `SameSite=Lax`; mutations also require CSRF tokens and RBAC.
+- Search, playlist/video additions, room creation, login, and realtime events are bounded or rate limited.
+- The Privacy Policy is versioned `2026-07-21`; room creation and controller registration assert that version, and the server records only a bounded anonymous acceptance hash.
+
+The implementation is designed to follow the current YouTube API Developer Policies, but deployment configuration and applicable local law remain operator responsibilities. Important routes: `/privacy-policy`, `/terms-of-service`, and `/contact`.
+
+## Production deployment
+
+Build the frontend:
+
+```bash
+npm --prefix client run build
 NODE_ENV=production npm start
 ```
 
-#### Client
-
-Build the static files:
-
-```bash
-cd client
-npm run build
-```
-
-The built files will be in `client/dist/`. Serve these with nginx or another web server.
-
-## Production Deployment with Nginx
-
-### Nginx Configuration
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name karaoke.example.com;
-
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-
-    # Serve static client files
-    root /var/www/youtube-karaoke-together/client/dist;
-    index index.html;
-
-    # Client-side routing
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    # API proxy
-    location /api/ {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # WebSocket proxy
-    location /ws/ {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 86400;
-    }
-}
-```
-
-### Production Environment Variables
-
-```bash
-PORT=8080
-NODE_ENV=production
-PUBLIC_FRONTEND_ORIGIN=https://karaoke.example.com
-YOUTUBE_API_KEY=your_api_key_here
-```
-
-**Important**: In production, the client does NOT need any environment variables. It automatically:
-- Uses `window.location.origin` for API calls
-- Uses `/ws/` path for Socket.IO connections
-
-## Usage
-
-1. Visit the homepage and accept the Terms of Service
-2. Click "Create Room" - this generates a unique room with secure keys
-3. The room screen displays a QR code for mobile users
-4. Mobile users scan the QR code, enter their name, and can then search/queue videos
-5. The room admin can manage controllers from the settings panel (gear icon)
-6. Use the control panel to search and queue videos (YouTube API v3)
-7. The main room plays the current video; queue updates in real time
-
-## Legal & Compliance
-
-This application is fully compliant with YouTube API Terms of Service:
-
-- **Terms of Service Binding**: Users explicitly agree to YouTube ToS
-- **Privacy Policy**: Comprehensive privacy protection disclosure
-- **Contact Information**: Multiple ways to reach us for support
-- **Data Transparency**: Clear explanation of data usage
-- **Google Privacy Policy**: Referenced and linked appropriately
-
-### Important Legal Pages
-
-- **Privacy Policy**: `/privacy-policy`
-- **Terms of Service**: `/terms-of-service`
-- **Contact Us**: `/contact`
-
-## Technologies Used
-
-- React 19 + Vite 7
-- Node.js + Express
-- Socket.IO (client/server)
-- Material UI (MUI)
-- YouTube Data API v3
-- react-youtube
-- express-rate-limit
-
-## API Rate Limits
-
-The server implements rate limiting to prevent abuse:
-
-- **Search API**: 30 requests per minute per IP
-- **Room Creation**: 10 rooms per minute per IP
-
-## Capacity Limits
-
-These are enforced on the server to prevent unbounded growth:
-
-- Max rooms: `server-limits.json` (`maxRooms`)
-- Max controllers per room: `maxControllersPerRoom`
-- Max queue length per room: `maxQueueLengthPerRoom`
-- Payload limits: `maxHttpBufferSize` and per-field length limits
+Serve `client/dist/` over HTTPS and proxy `/api/` and `/ws/` to the Node process. Start from [nginx.example.conf](nginx.example.conf), set the production origins and secrets, ensure the database/backup directories are writable only by the service account, and keep the Google OAuth origin configuration synchronized with the public URL.
 
 ## License
 
-GPL-3.0-only. See `LICENSE` for full text.
+GPL-3.0-only. See [LICENSE](LICENSE).

@@ -141,7 +141,7 @@ const TermsOfService = () => {
           variant="body2"
           sx={{ fontStyle: "italic", color: "text.secondary", mb: 4 }}
         >
-          Last updated: June 20, 2025
+          Last updated: July 21, 2026
         </Typography>
 
         <HighlightBox color="info">
@@ -249,8 +249,11 @@ const TermsOfService = () => {
             >
               Privacy Policy
             </Link>
-            , which explains how we collect, use, and protect your information. By
-            using the Service, you also consent to Google's data practices as
+            , which explains active-room persistence, minimized 30-day room/video
+            history, administrator access, API-usage metering, policy versioning,
+            deletion requests, and security controls. Material policy changes must
+            be accepted before affected functionality is used. By using YouTube
+            API Services and embedded playback, you also acknowledge Google's data practices as
             outlined in the{" "}
             <Link
               href="https://www.google.com/policies/privacy"

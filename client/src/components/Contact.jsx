@@ -179,7 +179,7 @@ const Contact = () => {
         <ContactCard
           icon={<Email sx={{ color: "#8B5CF6", fontSize: 24 }} />}
           title="All Inquiries"
-          description="For all questions, including general inquiries, technical support, privacy & legal matters, terms of service questions, feature requests, and feedback about the service."
+          description="For all questions, including support, privacy or deletion requests, legal matters, feature requests, and feedback. For a room-data request, include the room ID and approximate date, but never send a room, player, controller, invitation, or administrator credential. Applicable stored data is handled as soon as reasonably possible and within seven calendar days."
         />
 
         <Typography

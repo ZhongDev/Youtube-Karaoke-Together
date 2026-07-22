@@ -1,16 +1,44 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import io from 'socket.io-client';
-import { getSocketConfig } from '../config';
+import { CURRENT_PRIVACY_POLICY_VERSION, getSocketConfig } from '../config';
 
 // Single socket instance to be shared across components
 let socketInstance = null;
 let currentSocketUrl = null;
+const joinedMemberships = new Set();
+const joiningMemberships = new Set();
+
+function socketRequest({ event, payload, timeoutMessage }) {
+    return new Promise((resolve, reject) => {
+        if (!socketInstance?.connected) {
+            const error = new Error('Not connected');
+            error.code = 'not_connected';
+            reject(error);
+            return;
+        }
+        socketInstance.timeout(10000).emit(event, payload, (timeoutError, response) => {
+            if (timeoutError) {
+                const error = new Error(timeoutMessage);
+                error.code = 'timeout';
+                reject(error);
+                return;
+            }
+            if (!response?.ok) {
+                const error = new Error(response?.error?.message || 'The request could not be completed');
+                error.code = response?.error?.code || 'request_failed';
+                reject(error);
+                return;
+            }
+            const { ok, ...data } = response;
+            resolve(data);
+        });
+    });
+}
 
 const useSocket = () => {
     const [isConnected, setIsConnected] = useState(false);
     const [connectionError, setConnectionError] = useState(null);
     const [serverError, setServerError] = useState(null);
-    const hasJoinedRoomRef = useRef(new Set());
 
     useEffect(() => {
         const { url, options } = getSocketConfig();
@@ -43,7 +71,8 @@ const useSocket = () => {
         const handleDisconnect = (reason) => {
             console.log('[INFO] Socket disconnected:', reason);
             setIsConnected(false);
-            hasJoinedRoomRef.current.clear();
+            joinedMemberships.clear();
+            joiningMemberships.clear();
         };
 
         const handleError = (error) => {
@@ -55,6 +84,7 @@ const useSocket = () => {
             console.error('[ERR] Server error:', errorData);
             setServerError({
                 type: errorData.type,
+                code: errorData.code,
                 message: errorData.message,
                 timestamp: Date.now()
             });
@@ -81,171 +111,82 @@ const useSocket = () => {
 
     // Join room (public view, no auth required)
     const joinRoom = useCallback((roomId) => {
-        if (socketInstance && socketInstance.connected && roomId && !hasJoinedRoomRef.current.has(roomId)) {
+        if (socketInstance && socketInstance.connected && roomId && !joinedMemberships.has(roomId) && !joiningMemberships.has(roomId)) {
             console.log('[INFO] Joining room:', roomId);
-            socketInstance.emit('join-room', { roomId });
-            hasJoinedRoomRef.current.add(roomId);
+            joiningMemberships.add(roomId);
+            socketInstance.timeout(10000).emit('join-room', { roomId }, (error, response) => {
+                joiningMemberships.delete(roomId);
+                if (!error && response?.ok) { joinedMemberships.clear(); joinedMemberships.add(roomId); }
+            });
         }
     }, []);
 
     // Join room as admin (with playerKey)
     const joinRoomAdmin = useCallback((roomId, playerKey) => {
         const adminKey = `${roomId}:admin`;
-        if (socketInstance && socketInstance.connected && roomId && playerKey && !hasJoinedRoomRef.current.has(adminKey)) {
+        if (socketInstance && socketInstance.connected && roomId && playerKey && !joinedMemberships.has(adminKey) && !joiningMemberships.has(adminKey)) {
             console.log('[INFO] Joining room as admin:', roomId);
-            socketInstance.emit('join-room-admin', { roomId, playerKey });
-            hasJoinedRoomRef.current.add(adminKey);
+            joiningMemberships.add(adminKey);
+            socketInstance.timeout(10000).emit('join-room-admin', { roomId, playerKey }, (error, response) => {
+                joiningMemberships.delete(adminKey);
+                if (!error && response?.ok) { joinedMemberships.clear(); joinedMemberships.add(adminKey); }
+            });
         }
     }, []);
 
     // Register a new controller
     const registerController = useCallback((roomId, controlMasterKey, username) => {
-        return new Promise((resolve, reject) => {
-            if (!socketInstance || !socketInstance.connected) {
-                reject(new Error('Not connected'));
-                return;
-            }
-
-            const handleRegistered = (data) => {
-                socketInstance.off('controller-registered', handleRegistered);
-                socketInstance.off('error-message', handleError);
-                resolve(data);
-            };
-
-            const handleError = (error) => {
-                if (error.type === 'register-controller') {
-                    socketInstance.off('controller-registered', handleRegistered);
-                    socketInstance.off('error-message', handleError);
-                    reject(new Error(error.message));
-                }
-            };
-
-            socketInstance.on('controller-registered', handleRegistered);
-            socketInstance.on('error-message', handleError);
-
-            socketInstance.emit('register-controller', { roomId, controlMasterKey, username });
-
-            // Timeout after 10 seconds
-            setTimeout(() => {
-                socketInstance.off('controller-registered', handleRegistered);
-                socketInstance.off('error-message', handleError);
-                reject(new Error('Registration timeout'));
-            }, 10000);
+        return socketRequest({
+            event: 'register-controller', payload: {
+                roomId,
+                controlMasterKey,
+                username,
+                policyVersion: CURRENT_PRIVACY_POLICY_VERSION,
+            },
+            timeoutMessage: 'Registration timeout',
+        }).then((data) => {
+            joinedMemberships.clear();
+            joinedMemberships.add(roomId);
+            return data;
         });
     }, []);
 
     // Authenticate with existing controller key
     const authController = useCallback((roomId, controllerKey) => {
-        return new Promise((resolve, reject) => {
-            if (!socketInstance || !socketInstance.connected) {
-                reject(new Error('Not connected'));
-                return;
-            }
-
-            const handleAuthenticated = (data) => {
-                socketInstance.off('controller-authenticated', handleAuthenticated);
-                socketInstance.off('error-message', handleError);
-                hasJoinedRoomRef.current.add(roomId);
-                resolve(data);
-            };
-
-            const handleError = (error) => {
-                if (error.type === 'auth-controller') {
-                    socketInstance.off('controller-authenticated', handleAuthenticated);
-                    socketInstance.off('error-message', handleError);
-                    reject(new Error(error.message));
-                }
-            };
-
-            socketInstance.on('controller-authenticated', handleAuthenticated);
-            socketInstance.on('error-message', handleError);
-
-            socketInstance.emit('auth-controller', { roomId, controllerKey });
-
-            // Timeout after 10 seconds
-            setTimeout(() => {
-                socketInstance.off('controller-authenticated', handleAuthenticated);
-                socketInstance.off('error-message', handleError);
-                reject(new Error('Authentication timeout'));
-            }, 10000);
+        return socketRequest({
+            event: 'auth-controller', payload: { roomId, controllerKey },
+            timeoutMessage: 'Authentication timeout',
+        }).then((data) => {
+            joinedMemberships.clear();
+            joinedMemberships.add(roomId);
+            return data;
         });
     }, []);
 
     // Rename controller
     const renameController = useCallback((roomId, controllerKey, newName) => {
-        return new Promise((resolve, reject) => {
-            if (!socketInstance || !socketInstance.connected) {
-                reject(new Error('Not connected'));
-                return;
-            }
-
-            const handleRenamed = (data) => {
-                socketInstance.off('controller-renamed', handleRenamed);
-                socketInstance.off('error-message', handleError);
-                resolve(data);
-            };
-
-            const handleError = (error) => {
-                if (error.type === 'rename-controller') {
-                    socketInstance.off('controller-renamed', handleRenamed);
-                    socketInstance.off('error-message', handleError);
-                    reject(new Error(error.message));
-                }
-            };
-
-            socketInstance.on('controller-renamed', handleRenamed);
-            socketInstance.on('error-message', handleError);
-
-            socketInstance.emit('rename-controller', { roomId, controllerKey, newName });
-
-            setTimeout(() => {
-                socketInstance.off('controller-renamed', handleRenamed);
-                socketInstance.off('error-message', handleError);
-                reject(new Error('Rename timeout'));
-            }, 10000);
+        return socketRequest({
+            event: 'rename-controller', payload: { roomId, controllerKey, newName },
+            timeoutMessage: 'Rename timeout',
         });
     }, []);
 
     // Update controller color
     const updateControllerColor = useCallback((roomId, controllerKey, colorHue) => {
-        return new Promise((resolve, reject) => {
-            if (!socketInstance || !socketInstance.connected) {
-                reject(new Error('Not connected'));
-                return;
-            }
-
-            const handleUpdated = (data) => {
-                socketInstance.off('controller-color-updated', handleUpdated);
-                socketInstance.off('error-message', handleError);
-                resolve(data);
-            };
-
-            const handleError = (error) => {
-                if (error.type === 'update-controller-color') {
-                    socketInstance.off('controller-color-updated', handleUpdated);
-                    socketInstance.off('error-message', handleError);
-                    reject(new Error(error.message));
-                }
-            };
-
-            socketInstance.on('controller-color-updated', handleUpdated);
-            socketInstance.on('error-message', handleError);
-
-            socketInstance.emit('update-controller-color', { roomId, controllerKey, colorHue });
-
-            setTimeout(() => {
-                socketInstance.off('controller-color-updated', handleUpdated);
-                socketInstance.off('error-message', handleError);
-                reject(new Error('Color update timeout'));
-            }, 10000);
+        return socketRequest({
+            event: 'update-controller-color', payload: { roomId, controllerKey, colorHue },
+            timeoutMessage: 'Color update timeout',
         });
     }, []);
 
     const leaveRoom = useCallback((roomId) => {
-        if (socketInstance && roomId && hasJoinedRoomRef.current.has(roomId)) {
+        if (socketInstance && roomId && (joinedMemberships.has(roomId) || joinedMemberships.has(`${roomId}:admin`))) {
             console.log('[INFO] Leaving room:', roomId);
             socketInstance.emit('leave-room', roomId);
-            hasJoinedRoomRef.current.delete(roomId);
+            joinedMemberships.delete(roomId);
+            joinedMemberships.delete(`${roomId}:admin`);
+            joiningMemberships.delete(roomId);
+            joiningMemberships.delete(`${roomId}:admin`);
         }
     }, []);
 

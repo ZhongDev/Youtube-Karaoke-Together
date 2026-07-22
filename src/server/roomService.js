@@ -1,0 +1,570 @@
+const crypto = require('crypto');
+const { AppError, cleanText, generateToken, isIdentifier, tokenDigest } = require('./security');
+
+const PLAYBACK_STATES = new Set(['unstarted', 'ended', 'playing', 'paused', 'buffering', 'cued']);
+
+class RoomService {
+    constructor({ db, config, logger = console }) {
+        this.db = db;
+        this.config = config;
+        this.logger = logger;
+        this.rooms = new Map();
+        this.connections = new Map();
+        this.lastPlaybackCheckpoint = new Map();
+        this.loadActiveRooms();
+    }
+
+    loadActiveRooms() {
+        const now = Date.now();
+        for (const room of this.db.loadActiveRooms()) {
+            if (now - room.lastActivityAt >= this.config.inactivityMs) {
+                this.db.closeRoom(room.id, 'expired_during_downtime', now);
+                continue;
+            }
+            if (!Object.hasOwn(room.roundRobin, 'lastServedControllerId')) {
+                room.roundRobin.lastServedControllerId = room.roundRobin.participants[room.roundRobin.lastServedIdx] || null;
+                delete room.roundRobin.lastServedIdx;
+            }
+            this.rooms.set(room.id, room);
+        }
+        this.logger.info(`[INFO] Restored ${this.rooms.size} active room(s) from SQLite.`);
+    }
+
+    createRoom({ issueRegistrationInvite = true } = {}) {
+        if (this.rooms.size >= this.config.limits.maxRooms) {
+            throw new AppError('room_limit', 'Room limit reached. Please try again later.', 503);
+        }
+        const now = Date.now();
+        const playerKey = generateToken();
+        const room = {
+            id: crypto.randomUUID(),
+            status: 'active',
+            createdAt: now,
+            lastActivityAt: now,
+            closedAt: null,
+            closeReason: null,
+            playerKeyHash: this.digest(playerKey),
+            settings: { roundRobinEnabled: false },
+            roundRobin: { participants: [], lastServedControllerId: null },
+            currentVideo: null,
+            playback: {
+                state: 'unstarted',
+                positionSec: 0,
+                durationSec: null,
+                updatedAt: now,
+                videoId: null,
+            },
+            allowNewControllers: true,
+            nextQueueId: 1,
+            version: 1,
+            controllers: new Map(),
+            queue: [],
+        };
+        this.rooms.set(room.id, room);
+        this.db.saveRoom(room);
+        this.db.recordRoomEvent(room.id, 'room_created');
+        const invite = issueRegistrationInvite ? this.createRegistrationInvite(room.id) : null;
+        return { room, playerKey, registrationToken: invite?.token };
+    }
+
+    digest(token) {
+        return tokenDigest(token, this.config.tokenPepper);
+    }
+
+    get(roomId) {
+        if (!isIdentifier(roomId, 128)) return null;
+        return this.rooms.get(roomId) || null;
+    }
+
+    requireRoom(roomId) {
+        const room = this.get(roomId);
+        if (!room) throw new AppError('room_not_found', 'Room not found', 404);
+        return room;
+    }
+
+    validatePlayer(room, token) {
+        if (!token || this.digest(token) !== room.playerKeyHash) {
+            throw new AppError('invalid_player', 'Invalid player key', 401);
+        }
+        return true;
+    }
+
+    controller(room, token, { allowDisabled = false } = {}) {
+        if (!token) throw new AppError('invalid_controller', 'Invalid controller key', 401);
+        const controller = room.controllers.get(this.digest(token));
+        if (!controller) throw new AppError('invalid_controller', 'Invalid controller key', 401);
+        if (controller.removedAt) throw new AppError('controller_removed', 'Controller has been removed', 401);
+        if (!controller.enabled && !allowDisabled) throw new AppError('controller_disabled', 'Controller has been disabled', 403);
+        return controller;
+    }
+
+    authorizeSearch(roomId, token) {
+        const room = this.get(roomId);
+        if (!room || !token) return null;
+        const controller = room.controllers.get(this.digest(token));
+        return controller && controller.enabled && !controller.removedAt ? { room, controller } : null;
+    }
+
+    createRegistrationInvite(roomId) {
+        const room = this.requireRoom(roomId);
+        const token = generateToken();
+        const now = Date.now();
+        this.db.createRegistrationInvite({
+            id: crypto.randomUUID(),
+            roomId: room.id,
+            tokenHash: this.digest(token),
+            createdAt: now,
+            expiresAt: now + this.config.inviteTtlMs,
+        });
+        return { token, expiresAt: now + this.config.inviteTtlMs };
+    }
+
+    validateRegistrationInvite(room, token) {
+        if (!token) throw new AppError('invalid_invite', 'Invalid or expired registration link', 401);
+        const invite = this.db.registrationInvite(this.digest(token));
+        if (!invite || invite.room_id !== room.id) throw new AppError('invalid_invite', 'Invalid or expired registration link', 401);
+        return invite;
+    }
+
+    validateUsername(value) {
+        const name = cleanText(value, this.config.limits.maxUsernameLength + 1);
+        if (!name) throw new AppError('invalid_username', 'Username cannot be empty');
+        if (name.includes('[') || name.includes(']')) throw new AppError('invalid_username', 'Please remove [ or ] characters.');
+        if (name.length > this.config.limits.maxUsernameLength) {
+            throw new AppError('invalid_username', `Username must be ${this.config.limits.maxUsernameLength} characters or less.`);
+        }
+        return name;
+    }
+
+    uniqueUsername(room, baseName, excludeId = null) {
+        const names = new Set([...room.controllers.values()]
+            .filter((controller) => !controller.removedAt && controller.id !== excludeId)
+            .map((controller) => controller.name));
+        if (!names.has(baseName)) return baseName;
+        let suffix = 2;
+        while (names.has(`${baseName} [${suffix}]`)) suffix += 1;
+        return `${baseName} [${suffix}]`;
+    }
+
+    registerController(roomId, inviteToken, username) {
+        const room = this.requireRoom(roomId);
+        this.validateRegistrationInvite(room, inviteToken);
+        if (!room.allowNewControllers) throw new AppError('registration_disabled', 'New controller registration is disabled for this room', 403);
+        if ([...room.controllers.values()].filter((controller) => !controller.removedAt).length >= this.config.limits.maxControllersPerRoom) {
+            throw new AppError('controller_limit', 'Room is at maximum controller capacity', 409);
+        }
+        const token = generateToken();
+        const tokenHash = this.digest(token);
+        const now = Date.now();
+        const controller = {
+            id: crypto.randomUUID(),
+            tokenHash,
+            name: this.uniqueUsername(room, this.validateUsername(username)),
+            enabled: true,
+            createdAt: now,
+            removedAt: null,
+            colorHue: crypto.randomInt(0, 360),
+        };
+        room.controllers.set(tokenHash, controller);
+        this.upsertParticipant(room, controller.id);
+        this.mutate(room, 'controller_registered', { controllerId: controller.id });
+        this.db.updateRoomMetrics(room.id, { registeredDelta: 1 });
+        return { controller, controllerKey: token };
+    }
+
+    renameController(roomId, token, newName) {
+        const room = this.requireRoom(roomId);
+        const controller = this.controller(room, token);
+        const uniqueName = this.uniqueUsername(room, this.validateUsername(newName), controller.id);
+        controller.name = uniqueName;
+        for (const item of room.queue) if (item.controllerId === controller.id) item.addedBy = uniqueName;
+        if (room.currentVideo?.controllerId === controller.id) room.currentVideo.addedBy = uniqueName;
+        this.mutate(room, 'controller_renamed', { controllerId: controller.id });
+        return controller;
+    }
+
+    updateControllerColor(roomId, token, colorHue) {
+        const room = this.requireRoom(roomId);
+        const controller = this.controller(room, token);
+        if (!Number.isFinite(colorHue) || colorHue < 0 || colorHue >= 360) throw new AppError('invalid_color', 'Color hue must be between 0 and 359');
+        controller.colorHue = Math.floor(colorHue);
+        for (const item of room.queue) if (item.controllerId === controller.id) item.colorHue = controller.colorHue;
+        if (room.currentVideo?.controllerId === controller.id) room.currentVideo.colorHue = controller.colorHue;
+        this.mutate(room, 'controller_color_updated', { controllerId: controller.id });
+        return controller;
+    }
+
+    toggleController(roomId, playerKey, controllerId, enabled) {
+        const room = this.requireRoom(roomId);
+        this.validatePlayer(room, playerKey);
+        const controller = [...room.controllers.values()].find((entry) => entry.id === controllerId && !entry.removedAt);
+        if (!controller) throw new AppError('controller_not_found', 'Controller not found', 404);
+        controller.enabled = Boolean(enabled);
+        this.mutate(room, 'controller_toggled', { controllerId, enabled: controller.enabled });
+        return controller;
+    }
+
+    removeController(roomId, playerKey, controllerId) {
+        const room = this.requireRoom(roomId);
+        this.validatePlayer(room, playerKey);
+        const entry = [...room.controllers.entries()].find(([, controller]) => controller.id === controllerId && !controller.removedAt);
+        if (!entry) throw new AppError('controller_not_found', 'Controller not found', 404);
+        const [, controller] = entry;
+        controller.enabled = false;
+        controller.removedAt = Date.now();
+        if (!room.queue.some((item) => item.controllerId === controllerId) && room.currentVideo?.controllerId !== controllerId) {
+            this.removeParticipant(room, controllerId);
+        }
+        this.mutate(room, 'controller_removed', { controllerId });
+        return controller;
+    }
+
+    toggleRegistration(roomId, playerKey, allow) {
+        const room = this.requireRoom(roomId);
+        this.validatePlayer(room, playerKey);
+        room.allowNewControllers = Boolean(allow);
+        this.mutate(room, 'registration_toggled', { allow: room.allowNewControllers });
+        return room.allowNewControllers;
+    }
+
+    sanitizeVideo(video) {
+        if (!video || typeof video !== 'object' || Array.isArray(video)) throw new AppError('invalid_video', 'Invalid video data');
+        const id = cleanText(video.id, this.config.limits.maxVideoIdLength + 1);
+        const title = cleanText(video.title, this.config.limits.maxVideoTitleLength + 1);
+        if (!id || id.length > this.config.limits.maxVideoIdLength || !isIdentifier(id, this.config.limits.maxVideoIdLength)) {
+            throw new AppError('invalid_video', 'Invalid YouTube video ID');
+        }
+        if (!title || title.length > this.config.limits.maxVideoTitleLength) throw new AppError('invalid_video', 'Invalid video title');
+        return {
+            id,
+            title,
+            channelTitle: cleanText(video.channelTitle, 200),
+            thumbnailUrl: typeof video.thumbnailUrl === 'string' && /^https:\/\//.test(video.thumbnailUrl) ? video.thumbnailUrl.slice(0, 1000) : undefined,
+            sourcePlaylistId: video.sourcePlaylistId ? cleanText(video.sourcePlaylistId, 128) : undefined,
+            madeForKids: Boolean(video.madeForKids),
+        };
+    }
+
+    addVideos(roomId, token, videos) {
+        const room = this.requireRoom(roomId);
+        const controller = this.controller(room, token);
+        if (!Array.isArray(videos) || videos.length === 0) throw new AppError('invalid_video', 'No videos were provided');
+        const capacity = this.remainingQueueCapacity(room);
+        if (capacity <= 0) throw new AppError('queue_full', 'Queue is at maximum capacity', 409);
+        const accepted = videos.slice(0, capacity).map((video) => {
+            const cleaned = this.sanitizeVideo(video);
+            return {
+                ...cleaned,
+                queueId: String(room.nextQueueId++),
+                controllerId: controller.id,
+                addedBy: controller.name,
+                colorHue: controller.colorHue,
+                queuedAt: Date.now(),
+                apiDataRefreshedAt: Date.now(),
+            };
+        });
+        if (!room.currentVideo && accepted.length > 0) this.setCurrentVideo(room, accepted.shift());
+        room.queue.push(...accepted);
+        this.reorderRoundRobin(room);
+        const addedCount = videos.length > capacity ? capacity : videos.length;
+        this.mutate(room, 'videos_queued', { count: addedCount });
+        this.db.updateRoomMetrics(room.id, { queuedDelta: addedCount });
+        return { addedCount, skippedCount: videos.length - addedCount, room };
+    }
+
+    remainingQueueCapacity(room) {
+        return Math.max(0, this.config.limits.maxQueueLengthPerRoom - room.queue.length - (room.currentVideo ? 1 : 0));
+    }
+
+    removeFromQueue(roomId, token, queueId) {
+        const room = this.requireRoom(roomId);
+        this.controller(room, token);
+        const index = room.queue.findIndex((item) => String(item.queueId) === String(queueId));
+        if (index < 0) throw new AppError('queue_item_not_found', 'Queue item was already removed or advanced', 404);
+        const [removed] = room.queue.splice(index, 1);
+        this.db.setQueueItemStatus(room.id, removed.queueId, 'removed');
+        this.reorderRoundRobin(room);
+        this.pruneParticipant(room, removed.controllerId);
+        this.mutate(room, 'queue_item_removed', { queueId: String(queueId) });
+        return removed;
+    }
+
+    advance(roomId, credential, expectedQueueId, actor = 'controller') {
+        const room = this.requireRoom(roomId);
+        if (actor === 'player') this.validatePlayer(room, credential);
+        else this.controller(room, credential);
+        if (!room.currentVideo) return { advanced: false, reason: 'empty' };
+        if (!expectedQueueId) throw new AppError('expected_current_required', 'Current queue item ID is required');
+        if (String(room.currentVideo.queueId) !== String(expectedQueueId)) {
+            return { advanced: false, reason: 'stale', currentQueueId: room.currentVideo.queueId };
+        }
+        const previous = room.currentVideo;
+        const completedStatus = actor === 'player' ? 'played' : 'skipped';
+        this.db.setQueueItemStatus(room.id, previous.queueId, completedStatus);
+        this.setCurrentVideo(room, room.queue.shift() || null);
+        this.pruneParticipant(room, previous.controllerId);
+        this.mutate(room, actor === 'player' ? 'video_completed' : 'video_skipped', { queueId: previous.queueId });
+        this.db.updateRoomMetrics(room.id, actor === 'player' ? { playedDelta: 1 } : { skippedDelta: 1 });
+        return { advanced: true, currentVideo: room.currentVideo };
+    }
+
+    updateSettings(roomId, token, settings) {
+        const room = this.requireRoom(roomId);
+        this.controller(room, token);
+        if (!settings || typeof settings.roundRobinEnabled !== 'boolean') throw new AppError('invalid_settings', 'Invalid settings');
+        room.settings.roundRobinEnabled = settings.roundRobinEnabled;
+        this.reorderRoundRobin(room);
+        this.mutate(room, 'settings_updated', { roundRobinEnabled: settings.roundRobinEnabled });
+        return room.settings;
+    }
+
+    updatePlayback(roomId, playerKey, update) {
+        const room = this.requireRoom(roomId);
+        this.validatePlayer(room, playerKey);
+        if (update.state !== undefined && !PLAYBACK_STATES.has(update.state)) throw new AppError('invalid_playback', 'Invalid playback state');
+        const position = update.positionSec;
+        const duration = update.durationSec;
+        if (position !== undefined && (!Number.isFinite(position) || position < 0)) throw new AppError('invalid_playback', 'Invalid playback position');
+        if (duration !== undefined && duration !== null && (!Number.isFinite(duration) || duration < 0)) throw new AppError('invalid_playback', 'Invalid playback duration');
+        if (Number.isFinite(position) && Number.isFinite(duration) && position > duration + 5) throw new AppError('invalid_playback', 'Playback position exceeds duration');
+        if (update.videoId !== undefined && update.videoId !== null && update.videoId !== room.currentVideo?.id) {
+            throw new AppError('stale_playback', 'Playback update is for a stale video');
+        }
+        if (update.state !== undefined) room.playback.state = update.state;
+        if (position !== undefined) room.playback.positionSec = position;
+        if (duration !== undefined) room.playback.durationSec = duration;
+        room.playback.videoId = room.currentVideo?.id || null;
+        room.playback.updatedAt = Date.now();
+        room.lastActivityAt = Date.now();
+        const lastCheckpoint = this.lastPlaybackCheckpoint.get(room.id) || 0;
+        if (Date.now() - lastCheckpoint >= this.config.playbackCheckpointMs || update.state === 'paused' || update.state === 'ended') {
+            room.version += 1;
+            this.db.saveRoom(room);
+            this.lastPlaybackCheckpoint.set(room.id, Date.now());
+        }
+        return room.playback;
+    }
+
+    setCurrentVideo(room, video) {
+        room.currentVideo = video;
+        if (video) video.startedAt ||= Date.now();
+        room.playback = {
+            state: 'unstarted',
+            positionSec: 0,
+            durationSec: null,
+            updatedAt: Date.now(),
+            videoId: video?.id || null,
+        };
+        if (video?.controllerId) {
+            this.upsertParticipant(room, video.controllerId);
+            room.roundRobin.lastServedControllerId = video.controllerId;
+        }
+    }
+
+    upsertParticipant(room, controllerId) {
+        if (controllerId && !room.roundRobin.participants.includes(controllerId)) room.roundRobin.participants.push(controllerId);
+    }
+
+    removeParticipant(room, controllerId) {
+        const index = room.roundRobin.participants.indexOf(controllerId);
+        if (index < 0) return;
+        room.roundRobin.participants.splice(index, 1);
+        if (room.roundRobin.lastServedControllerId === controllerId) room.roundRobin.lastServedControllerId = null;
+    }
+
+    pruneParticipant(room, controllerId) {
+        if (!controllerId) return;
+        const activeController = [...room.controllers.values()].some((controller) => controller.id === controllerId && !controller.removedAt);
+        const hasVideos = room.currentVideo?.controllerId === controllerId || room.queue.some((item) => item.controllerId === controllerId);
+        if (!activeController && !hasVideos) this.removeParticipant(room, controllerId);
+    }
+
+    reorderRoundRobin(room) {
+        if (!room.settings.roundRobinEnabled || room.queue.length < 2) return;
+        const buckets = new Map();
+        for (const item of room.queue) {
+            const participant = item.controllerId || 'unknown';
+            this.upsertParticipant(room, participant);
+            if (!buckets.has(participant)) buckets.set(participant, []);
+            buckets.get(participant).push(item);
+        }
+        const participants = room.roundRobin.participants.filter((id) => buckets.has(id));
+        if (participants.length < 2) return;
+        const ordered = [];
+        let cursor = participants.indexOf(room.roundRobin.lastServedControllerId);
+        while (ordered.length < room.queue.length) {
+            let selected = -1;
+            for (let step = 1; step <= participants.length; step += 1) {
+                const index = (cursor + step + participants.length) % participants.length;
+                if (buckets.get(participants[index])?.length) { selected = index; break; }
+            }
+            if (selected < 0) break;
+            ordered.push(buckets.get(participants[selected]).shift());
+            cursor = selected;
+        }
+        room.queue = ordered;
+    }
+
+    mutate(room, eventType, detail = {}) {
+        room.lastActivityAt = Date.now();
+        room.version += 1;
+        this.db.saveRoom(room);
+        this.db.recordRoomEvent(room.id, eventType, detail);
+    }
+
+    publicState(room) {
+        return {
+            roomId: room.id,
+            status: room.status,
+            queue: room.queue,
+            currentVideo: room.currentVideo,
+            settings: room.settings,
+            playback: room.playback,
+            createdAt: room.createdAt,
+            lastActivityAt: room.lastActivityAt,
+            allowNewControllers: room.allowNewControllers,
+            version: room.version,
+        };
+    }
+
+    playerAdminState(room) {
+        return {
+            ...this.publicState(room),
+            controllers: [...room.controllers.values()].filter((controller) => !controller.removedAt).map((controller) => ({
+                id: controller.id,
+                name: controller.name,
+                enabled: controller.enabled,
+                createdAt: controller.createdAt,
+                colorHue: controller.colorHue,
+            })),
+        };
+    }
+
+    joinConnection(roomId, socketId, role) {
+        const room = this.requireRoom(roomId);
+        if (!this.connections.has(roomId)) this.connections.set(roomId, new Map());
+        this.connections.get(roomId).set(socketId, role);
+        if (role === 'controller' || role === 'player') this.touchAuthenticated(room);
+        const counts = this.connectionCounts(roomId);
+        this.db.updateRoomMetrics(roomId, {
+            peakConnectedSockets: counts.total,
+            peakPublicViewers: counts.public,
+            peakControllers: counts.controllers,
+        });
+        return counts;
+    }
+
+    touchAuthenticated(room) {
+        room.lastActivityAt = Date.now();
+        room.version += 1;
+        this.db.saveRoom(room);
+    }
+
+    leaveConnection(roomId, socketId) {
+        const registry = this.connections.get(roomId);
+        if (!registry) return;
+        registry.delete(socketId);
+        if (registry.size === 0) this.connections.delete(roomId);
+    }
+
+    connectionCounts(roomId) {
+        const roles = [...(this.connections.get(roomId)?.values() || [])];
+        return {
+            total: roles.length,
+            public: roles.filter((role) => role === 'public').length,
+            controllers: roles.filter((role) => role === 'controller').length,
+            players: roles.filter((role) => role === 'player').length,
+        };
+    }
+
+    controllerCounts(roomId) {
+        const room = this.get(roomId);
+        if (!room) return { registered: 0, enabled: 0 };
+        const active = [...room.controllers.values()].filter((controller) => !controller.removedAt);
+        return { registered: active.length, enabled: active.filter((controller) => controller.enabled).length };
+    }
+
+    flush() {
+        for (const room of this.rooms.values()) this.db.saveRoom(room);
+    }
+
+    closeRoom(roomId, reason = 'expired') {
+        const room = this.rooms.get(roomId);
+        if (!room) return false;
+        room.status = 'closed';
+        room.closedAt = Date.now();
+        room.closeReason = reason;
+        this.db.closeRoom(roomId, reason, room.closedAt);
+        this.rooms.delete(roomId);
+        this.connections.delete(roomId);
+        this.lastPlaybackCheckpoint.delete(roomId);
+        return true;
+    }
+
+    deleteRoomData(roomId, playerKey) {
+        const room = this.requireRoom(roomId);
+        this.validatePlayer(room, playerKey);
+        const deleted = this.db.deleteRoomData(room.id, this.digest(`room:${room.id}`));
+        this.rooms.delete(room.id);
+        this.connections.delete(room.id);
+        this.lastPlaybackCheckpoint.delete(room.id);
+        return deleted;
+    }
+
+    expireInactive(now = Date.now()) {
+        const expired = [];
+        for (const room of this.rooms.values()) {
+            if (now - room.lastActivityAt >= this.config.inactivityMs) {
+                expired.push(room.id);
+                this.closeRoom(room.id, 'inactive');
+            }
+        }
+        return expired;
+    }
+
+    runRetention(now = Date.now()) {
+        return this.db.purgeExpired(now - this.config.historyRetentionMs);
+    }
+
+    staleYouTubeVideoIds(cutoff) {
+        const ids = [];
+        for (const room of this.rooms.values()) {
+            for (const item of [room.currentVideo, ...room.queue]) {
+                if (item?.id && (item.apiDataRefreshedAt || item.queuedAt || 0) <= cutoff) {
+                    ids.push({ roomId: room.id, videoId: item.id });
+                }
+            }
+        }
+        return ids;
+    }
+
+    refreshYouTubeMetadata(roomId, requestedIds, refreshedVideos, now = Date.now()) {
+        const room = this.requireRoom(roomId);
+        const requested = new Set(requestedIds);
+        const metadata = new Map(refreshedVideos.map((video) => [video.id, video]));
+        let changed = false;
+        for (const item of [room.currentVideo, ...room.queue]) {
+            if (!item || !requested.has(item.id)) continue;
+            const update = metadata.get(item.id);
+            if (update) {
+                item.title = update.title;
+                item.channelTitle = update.channelTitle;
+                item.thumbnailUrl = update.thumbnailUrl;
+                item.madeForKids = update.madeForKids;
+            } else {
+                item.title = 'Unavailable YouTube video';
+                item.channelTitle = '';
+                delete item.thumbnailUrl;
+            }
+            item.apiDataRefreshedAt = now;
+            changed = true;
+        }
+        if (changed) {
+            room.version += 1;
+            this.db.saveRoom(room);
+        }
+        return changed;
+    }
+}
+
+module.exports = { PLAYBACK_STATES, RoomService };

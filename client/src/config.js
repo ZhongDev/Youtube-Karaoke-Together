@@ -75,13 +75,18 @@ export const STORAGE_KEYS = {
     CONTROLLER_KEY_PREFIX: 'ytkt_controllerKey_',
     PLAYER_KEY_PREFIX: 'ytkt_playerKey_',
     USERNAME: 'karaokeUsername',
+    SESSION_USERNAME: 'karaokeSessionUsername',
     REMEMBER_ME: 'karaokeRememberMe',
     TOS_ACCEPTED: 'tosDoNotAsk',
+    PRIVACY_POLICY_ACCEPTED_VERSION: 'ytkt_privacyPolicyAcceptedVersion',
+    REGISTRATION_TOKEN_PREFIX: 'ytkt_registrationToken_',
     QUEUE_COLORS_ENABLED: 'ytkt_queueColorsEnabled',
     BG_COLOR_ENABLED: 'ytkt_bgColorEnabled',
     ROOM_QUEUE_COLORS_ENABLED: 'ytkt_roomQueueColorsEnabled',
     LYRICS_ROMAJI_ENABLED: 'ytkt_lyricsRomajiEnabled',
 };
+
+export const CURRENT_PRIVACY_POLICY_VERSION = '2026-07-21';
 
 /**
  * Decode HTML entity references in a string. Safe for use on values like
@@ -114,10 +119,27 @@ export function normalizeStoredUsername(name) {
  * Get stored preferred username and auto-heal legacy suffixed values.
  */
 export function getStoredPreferredUsername() {
-    const raw = localStorage.getItem(STORAGE_KEYS.USERNAME) || '';
+    const remember = localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) === 'true';
+    const storage = remember ? localStorage : sessionStorage;
+    const key = remember ? STORAGE_KEYS.USERNAME : STORAGE_KEYS.SESSION_USERNAME;
+    const raw = storage.getItem(key) || '';
     const normalized = normalizeStoredUsername(raw);
     if (raw !== normalized) {
+        storage.setItem(key, normalized);
+    }
+    return normalized;
+}
+
+export function storePreferredUsername(name, remember) {
+    const normalized = normalizeStoredUsername(name);
+    if (remember) {
         localStorage.setItem(STORAGE_KEYS.USERNAME, normalized);
+        localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, 'true');
+        sessionStorage.removeItem(STORAGE_KEYS.SESSION_USERNAME);
+    } else {
+        localStorage.removeItem(STORAGE_KEYS.USERNAME);
+        localStorage.removeItem(STORAGE_KEYS.REMEMBER_ME);
+        sessionStorage.setItem(STORAGE_KEYS.SESSION_USERNAME, normalized);
     }
     return normalized;
 }
@@ -173,6 +195,7 @@ export default {
     decodeHtmlEntities,
     normalizeStoredUsername,
     getStoredPreferredUsername,
+    storePreferredUsername,
     getStoredControllerKey,
     storeControllerKey,
     removeControllerKey,

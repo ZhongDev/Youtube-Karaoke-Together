@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.0] - 2026-07-21 - Durable Rooms and Administration
+
+### Added
+
+- SQLite schema migrations, transactional room/queue/controller persistence, playback checkpoints, and active-room restart recovery
+- Minimized administrator-visible room and selected-video history with automatic pre-30-day purge and metadata refresh boundaries
+- Daily production SQLite backups with 24-hour rotation, integrity/backup commands, restore guidance, readiness checks, and graceful shutdown
+- Google Identity Services administrator sign-in with one-time first-owner bootstrap, invitations, revocable sessions, CSRF protection, and owner/admin/viewer roles
+- Lazy-loaded administrator dashboard for active rooms, recent history, room detail, connected/peak client counts, YouTube API usage, administrator access, and audit events
+- Locally metered, versioned YouTube quota catalog with separate search, general, and video-upload buckets and Pacific-Time reporting
+- Bounded server-side playlist expansion and playable/public-video validation through the YouTube API
+- Versioned privacy consent and a one-time updated-policy modal for browsers carrying the legacy `tosDoNotAsk` preference
+- Creator-authenticated permanent deletion for active room data, including correlated API usage and anonymous policy records
+- Executable Node and Vitest suites covering malformed socket events, CORS, queue identity, duplicate advance, recovery, retention, admin bootstrap/session/CSRF, quota metering, and consent migration
+- Node 22 GitHub Actions gate for clean installs, server/client tests, production build, and dependency audits
+
+### Changed
+
+- Split the former server monolith into configuration, security, database, room, YouTube, admin, HTTP, and Socket.IO modules
+- Reduced the controller route by moving search/pagination and playback controls into feature-owned components; lazy-loaded controller, room, admin, contact, and legal routes
+- Changed queue removal from rendered indexes to stable queue-item IDs and required the expected current item for skip/auto-advance
+- Changed room expiry from creation age to authenticated inactivity and added a visible room-closed event
+- Changed permanent shared controller registration capabilities to short-lived registration invitations
+- Moved new QR registration credentials into non-request URL fragments and removed registration/legacy player credentials from visible URLs immediately after local capability storage
+- Limited live room/API history to 28 days and application-managed recovery backups to 24 hours so backup rotation does not silently extend the 30-day API-data boundary
+- Updated the Privacy Policy and Terms effective July 21, 2026 to describe persistence, administrator access, retention, deletion, and policy-version acceptance
+- Updated root/client packages and bumped the application and client versions to 3.0.0
+
+### Fixed
+
+- Prevented malformed or missing Socket.IO payloads from throwing before guarded validation and terminating the Node process
+- Prevented lookalike origins from bypassing prefix-based CORS checks
+- Prevented duplicate player/controller advance events from skipping multiple queued items
+- Corrected round-robin continuation to track a stable last-served controller ID, including when idle participants are filtered from the queued set
+- Preserved controller credentials across transient disconnects/timeouts while distinguishing disabled, removed, and invalid credentials
+- Added precise socket listener cleanup, request-correlated acknowledgements, scoped room membership and search authorization, stale search-response protection, and playback validation/reset behavior
+- Added visible retry/skip recovery for YouTube player failures and canonical display-boundary title decoding
+
+### Security
+
+- Store room/controller/player/invitation/administrator bearer credentials as hashes and keep raw credentials out of logs, history, and dashboard responses
+- Added exact CORS, Helmet security headers, bounded payloads/events, rate limits, short-lived invitations, secure administrator cookies, RBAC, recent reauthentication, and last-owner protection
+- Removed controller names, search queries, IP/user-agent histories, and credentials from closed-room history
+- Updated vulnerable Engine.IO, `ws`, React Router, Express, and related dependency trees; production and development audits report zero known vulnerabilities at release verification
+
+### Documentation
+
+- Rebuilt the root and client READMEs for v3 setup, architecture, Google admin onboarding, SQLite operations, retention, quota accounting, testing, and deployment
+- Added repository-wide `AGENTS.md` guidance requiring README/changelog reconciliation after every major build session
+
 ## [2.0.0] - 2026-02-05 - Security, Controls, and UI
 
 ### Added

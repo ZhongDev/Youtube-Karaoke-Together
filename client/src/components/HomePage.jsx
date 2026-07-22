@@ -23,27 +23,27 @@ import {
   MusicNote,
 } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
-import { getBackendUrl, storePlayerKey } from "../config";
+import { CURRENT_PRIVACY_POLICY_VERSION, getBackendUrl, storePlayerKey } from "../config";
+import {
+  acceptPrivacyUpdate,
+  getHomepageConsentState,
+  persistCurrentConsent,
+} from "../features/consent/consentStorage";
 
 const HomePage = () => {
   const navigate = useNavigate();
   const [tosDialogOpen, setTosDialogOpen] = useState(false);
+  const [privacyUpdateOpen, setPrivacyUpdateOpen] = useState(false);
   const [tosAccepted, setTosAccepted] = useState(false);
   const [dontAskAgain, setDontAskAgain] = useState(false);
   const [isCreatingRoom, setIsCreatingRoom] = useState(false);
   const [createError, setCreateError] = useState(null);
 
   useEffect(() => {
-    // Check if user chose "don't ask again"
-    const dontAsk = localStorage.getItem("tosDoNotAsk");
-
-    if (dontAsk === "true") {
-      // User chose "don't ask again", so accept automatically
-      setTosAccepted(true);
-    } else {
-      // Always show ToS dialog unless user specifically chose "don't ask again"
-      setTosDialogOpen(true);
-    }
+    const state = getHomepageConsentState();
+    setTosAccepted(state.termsAccepted);
+    setTosDialogOpen(state.showTerms);
+    setPrivacyUpdateOpen(state.showPrivacyUpdate);
   }, []);
 
   const handleCreateRoom = async () => {
@@ -61,6 +61,7 @@ const HomePage = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Privacy-Policy-Version': CURRENT_PRIVACY_POLICY_VERSION,
         },
       });
 
@@ -75,8 +76,7 @@ const HomePage = () => {
       // Store player key for this room
       storePlayerKey(roomId, playerKey);
 
-      // Navigate to room with playerKey in URL (for initial setup)
-      navigate(`/room/${roomId}?key=${encodeURIComponent(playerKey)}`);
+      navigate(`/room/${roomId}`);
     } catch (error) {
       console.error('[ERR] Failed to create room:', error);
       setCreateError(error.message);
@@ -90,10 +90,21 @@ const HomePage = () => {
 
     // Only save to localStorage if user checked "don't ask again"
     if (dontAskAgain) {
-      localStorage.setItem("tosDoNotAsk", "true");
+      persistCurrentConsent();
     }
 
     setTosDialogOpen(false);
+  };
+
+  const handlePrivacyUpdateAccept = () => {
+    try {
+      acceptPrivacyUpdate();
+      setTosAccepted(true);
+      setPrivacyUpdateOpen(false);
+    } catch {
+      setPrivacyUpdateOpen(false);
+      setTosDialogOpen(true);
+    }
   };
 
   const handleTosDecline = () => {
@@ -238,8 +249,8 @@ const HomePage = () => {
                 lineHeight: 1.7,
               }}
             >
-              Create shared viewing rooms, queue videos collaboratively, and enjoy
-              synchronized playback across all devices.
+              Create a shared player, queue videos collaboratively, and control
+              the room from everyone&apos;s device.
             </Typography>
 
             {createError && (
@@ -454,6 +465,52 @@ const HomePage = () => {
 
       {/* Terms of Service Dialog */}
       <Dialog
+        open={privacyUpdateOpen}
+        onClose={() => {}}
+        maxWidth="sm"
+        fullWidth
+        disableEscapeKeyDown
+        PaperProps={{
+          sx: {
+            background: "linear-gradient(180deg, #12121A 0%, #0A0A0F 100%)",
+            border: "1px solid rgba(139, 92, 246, 0.35)",
+            borderRadius: 3,
+          },
+        }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, borderBottom: "1px solid rgba(148, 163, 184, 0.1)" }}>
+          Privacy Policy Updated
+        </DialogTitle>
+        <DialogContent sx={{ pt: 3 }}>
+          <Typography paragraph sx={{ color: "text.secondary", mt: 2 }}>
+            Our Privacy Policy has changed, effective July 21, 2026. We now use
+            durable room state for restart recovery and retain a minimized room
+            and selected-video history for administrator operations for up to 30 days.
+          </Typography>
+          <Typography paragraph sx={{ color: "text.secondary" }}>
+            Search queries, controller display names, room credentials, IP address
+            histories, and raw authentication tokens are not included in that
+            historical room record. Authorized administrators can view the retained
+            room summaries and locally metered YouTube API usage.
+          </Typography>
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            Policy version: {CURRENT_PRIVACY_POLICY_VERSION}. Please review the{" "}
+            <Link href="/privacy-policy" target="_blank" rel="noopener noreferrer" sx={{ color: "#8B5CF6" }}>
+              complete updated Privacy Policy
+            </Link>.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 3, borderTop: "1px solid rgba(148, 163, 184, 0.1)" }}>
+          <Button onClick={handleTosDecline} sx={{ color: "#EF4444" }}>
+            Decline & Return
+          </Button>
+          <Button onClick={handlePrivacyUpdateAccept} variant="contained">
+            Accept Updated Policy
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
         open={tosDialogOpen}
         onClose={() => {}} // Prevent closing without action
         maxWidth="md"
@@ -506,8 +563,11 @@ const HomePage = () => {
             Privacy & Data Usage
           </Typography>
           <Typography variant="body2" paragraph sx={{ color: "text.secondary" }}>
-            Our service processes video search queries and room management data.
-            We do not store personal information permanently. Please review our{" "}
+            Our service processes video searches and stores active room state for
+            restart recovery. A minimized room and selected-video history is
+            retained for no more than 30 days for authorized administrator
+            operations; controller names and search queries are excluded from that
+            history. Please review our{" "}
             <Link
               onClick={() => navigate("/privacy-policy")}
               sx={{ cursor: "pointer", color: "#8B5CF6" }}

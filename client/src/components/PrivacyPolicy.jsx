@@ -1,402 +1,110 @@
 import React from "react";
-import {
-  Container,
-  Typography,
-  Box,
-  Paper,
-  Link,
-  List,
-  ListItem,
-} from "@mui/material";
-import { useNavigate } from "react-router-dom";
 import { ArrowBack } from "@mui/icons-material";
+import { Box, Container, Link, List, ListItem, Paper, Typography } from "@mui/material";
+import { useNavigate } from "react-router-dom";
+import { CURRENT_PRIVACY_POLICY_VERSION } from "../config";
+
+const Section = ({ title, children }) => (
+  <Box component="section" sx={{ mb: 5 }}>
+    <Typography variant="h5" component="h2" sx={{ color: "#8B5CF6", fontWeight: 600, mb: 2 }}>{title}</Typography>
+    {children}
+  </Box>
+);
+
+const Item = ({ children }) => <ListItem sx={{ color: "text.secondary", alignItems: "flex-start" }}>•&nbsp;{children}</ListItem>;
 
 const PrivacyPolicy = () => {
   const navigate = useNavigate();
-
-  const HighlightBox = ({ children, color = "info" }) => (
-    <Paper
-      elevation={0}
-      sx={{
-        p: 3,
-        my: 3,
-        background: color === "info" 
-          ? "rgba(59, 130, 246, 0.1)" 
-          : "rgba(139, 92, 246, 0.1)",
-        border: `1px solid ${color === "info" 
-          ? "rgba(59, 130, 246, 0.2)" 
-          : "rgba(139, 92, 246, 0.2)"}`,
-        borderLeft: `4px solid ${color === "info" ? "#3B82F6" : "#8B5CF6"}`,
-        borderRadius: 2,
-      }}
-    >
-      {children}
-    </Paper>
-  );
-
-  const Section = ({ title, children }) => (
-    <Box sx={{ mb: 5 }}>
-      <Typography
-        variant="h5"
-        component="h2"
-        gutterBottom
-        sx={{ 
-          color: "#8B5CF6", 
-          fontWeight: 600,
-          mb: 2,
-        }}
-      >
-        {title}
-      </Typography>
-      {children}
-    </Box>
-  );
-
   return (
-    <Box
-      sx={{
-        minHeight: "100vh",
-        background: "linear-gradient(180deg, #0A0A0F 0%, #12121A 50%, #0A0A0F 100%)",
-        position: "relative",
-      }}
-    >
-      {/* Background glow */}
-      <Box
-        sx={{
-          position: "absolute",
-          top: "5%",
-          right: "10%",
-          width: "400px",
-          height: "400px",
-          background: "radial-gradient(circle, rgba(139, 92, 246, 0.1) 0%, transparent 70%)",
-          filter: "blur(60px)",
-          pointerEvents: "none",
-        }}
-      />
-
-      <Container maxWidth="md" sx={{ py: 6, position: "relative", zIndex: 1 }}>
-        <Box
-          sx={{
-            mb: 4,
-            display: "flex",
-            alignItems: "center",
-            gap: 2,
-          }}
-        >
-          <Box
-            onClick={() => navigate("/")}
-            sx={{
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 40,
-              height: 40,
-              borderRadius: 2,
-              background: "rgba(139, 92, 246, 0.1)",
-              border: "1px solid rgba(139, 92, 246, 0.2)",
-              transition: "all 0.2s",
-              "&:hover": {
-                background: "rgba(139, 92, 246, 0.2)",
-              },
-            }}
-          >
-            <ArrowBack sx={{ color: "#8B5CF6" }} />
-          </Box>
-          <Typography
-            variant="h3"
-            component="h1"
-            sx={{
-              fontWeight: 700,
-              background: "linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)",
-              backgroundClip: "text",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-            }}
-          >
-            Privacy Policy
-          </Typography>
+    <Box sx={{ minHeight: "100vh", background: "linear-gradient(180deg, #0A0A0F 0%, #12121A 50%, #0A0A0F 100%)" }}>
+      <Container maxWidth="md" sx={{ py: 6 }}>
+        <Box sx={{ mb: 4, display: "flex", alignItems: "center", gap: 2 }}>
+          <Box onClick={() => navigate("/")} role="button" aria-label="Return home" sx={{ cursor: "pointer", p: 1, display: "grid", placeItems: "center", borderRadius: 2, background: "rgba(139,92,246,.1)" }}><ArrowBack sx={{ color: "#8B5CF6" }} /></Box>
+          <Typography variant="h3" component="h1" sx={{ fontWeight: 700 }}>Privacy Policy</Typography>
         </Box>
 
-        <Typography
-          variant="body2"
-          sx={{ fontStyle: "italic", color: "text.secondary", mb: 4 }}
-        >
-          Last updated: June 20, 2025
+        <Typography variant="body2" sx={{ fontStyle: "italic", color: "text.secondary", mb: 3 }}>
+          Effective July 21, 2026 · Version {CURRENT_PRIVACY_POLICY_VERSION}
         </Typography>
+        <Paper sx={{ p: 3, mb: 5, borderLeft: "4px solid #3B82F6", background: "rgba(59,130,246,.1)" }}>
+          <Typography>
+            YouTube Karaoke Together uses YouTube API Services. By using the service, you also agree to the{" "}
+            <Link href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">YouTube Terms of Service</Link>{" "}
+            and acknowledge the <Link href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google Privacy Policy</Link>.
+          </Typography>
+        </Paper>
 
-        <HighlightBox color="info">
-          <Typography variant="body1" sx={{ fontWeight: 600, color: "text.primary" }}>
-            Important Notice: This application uses YouTube API Services. By using
-            YouTube Karaoke Together, you agree to be bound by the{" "}
-            <Link
-              href="https://www.youtube.com/t/terms"
-              target="_blank"
-              rel="noopener noreferrer"
-              sx={{ color: "#60A5FA" }}
-            >
-              YouTube Terms of Service
-            </Link>{" "}
-            and the{" "}
-            <Link
-              href="https://www.google.com/policies/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              sx={{ color: "#60A5FA" }}
-            >
-              Google Privacy Policy
-            </Link>
-            .
-          </Typography>
-        </HighlightBox>
-
-        <Section title="1. Information We Collect">
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            YouTube Karaoke Together ("we," "our," or "us") collects and processes
-            the following types of information:
-          </Typography>
-
-          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mt: 3 }}>
-            1.1 YouTube API Data
-          </Typography>
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            When you use our service, we access YouTube API Services to:
-          </Typography>
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>• Search for videos based on your queries</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              • Retrieve video metadata (titles, descriptions, thumbnails)
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Display video content in embedded players</ListItem>
+        <Section title="1. Information we process">
+          <List disablePadding>
+            <Item><strong>Active rooms:</strong>&nbsp;room identifiers, creation/activity times, room settings, playback checkpoints, selected YouTube video IDs and metadata, queue order, temporary controller display names/colors, and hashed room credentials.</Item>
+            <Item><strong>Closed-room history:</strong>&nbsp;a minimized room summary, timestamps, client-count statistics, and selected-video history. Controller names, search queries, IP-address histories, user-agent histories, and raw credentials are excluded.</Item>
+            <Item><strong>YouTube API operations:</strong>&nbsp;API method, quota bucket/cost, time, result status, latency, and optional room correlation. API keys are never displayed in the dashboard or usage records.</Item>
+            <Item><strong>Administrator accounts:</strong>&nbsp;Google account subject identifier, email/name snapshot, role, sessions, invitations, and security audit events. Google sign-in is separate from YouTube account authorization.</Item>
+            <Item><strong>Local browser data:</strong>&nbsp;policy/Terms acceptance version, room/controller credentials, display-name preference, and interface settings.</Item>
           </List>
-
-          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mt: 3 }}>
-            1.2 User-Provided Information
-          </Typography>
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>• Display names you choose for karaoke sessions</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Room preferences and settings</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Video search queries</ListItem>
-          </List>
-
-          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mt: 3 }}>
-            1.3 Automatically Collected Information
-          </Typography>
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>
-              • Device information (browser type, operating system)
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• IP addresses and location data</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Usage patterns and session data</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Cookies and similar tracking technologies</ListItem>
-          </List>
-        </Section>
-
-        <Section title="2. How We Use Your Information">
-          <Typography paragraph sx={{ color: "text.secondary" }}>We use the collected information to:</Typography>
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>• Provide synchronized video playback services</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Manage karaoke room sessions and queues</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              • Search and display YouTube content via API Services
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              • Improve our service performance and user experience
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Ensure technical functionality and security</ListItem>
-          </List>
-        </Section>
-
-        <Section title="3. Information Sharing and Disclosure">
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            We share information in the following ways:
-          </Typography>
-
-          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mt: 3 }}>
-            3.1 With Google/YouTube
-          </Typography>
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            Your use of YouTube content through our service is governed by
-            YouTube's Terms of Service and Google's Privacy Policy. Video viewing
-            data and API usage data are processed by Google.
-          </Typography>
-
-          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mt: 3 }}>
-            3.2 Within Karaoke Sessions
-          </Typography>
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            Information you share in karaoke rooms (display names, video
-            selections) is visible to other participants in the same room.
-          </Typography>
-
-          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mt: 3 }}>
-            3.3 Service Providers
-          </Typography>
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            We may share data with third-party service providers who assist in:
-          </Typography>
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>• Hosting and technical infrastructure</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Analytics and performance monitoring</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Security and fraud prevention</ListItem>
-          </List>
-        </Section>
-
-        <Section title="4. Cookies and Tracking Technologies">
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            Our service stores, accesses, and collects information on your devices
-            through:
-          </Typography>
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>
-              <strong style={{ color: "#F1F5F9" }}>Essential Cookies:</strong> Required for basic
-              functionality, room management, and user preferences
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              <strong style={{ color: "#F1F5F9" }}>Performance Cookies:</strong> Help us understand how you use
-              our service
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              <strong style={{ color: "#F1F5F9" }}>YouTube Cookies:</strong> Placed by YouTube's embedded
-              players and API services
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              <strong style={{ color: "#F1F5F9" }}>Local Storage:</strong> Stores your preferences and session
-              data locally
-            </ListItem>
-          </List>
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            You can control cookies through your browser settings, but disabling
-            them may affect service functionality.
+          <Typography color="text.secondary">
+            Search text is sent to YouTube to perform the requested search but is not persisted in room history. We do not download or store YouTube audiovisual content.
           </Typography>
         </Section>
 
-        <Section title="5. Data Retention">
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>
-              • Room data is automatically deleted after 24 hours of inactivity
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              • User preferences are stored locally on your device
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Search queries are not permanently stored</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              • Log data is retained for up to 30 days for security purposes
-            </ListItem>
+        <Section title="2. How and why we use information">
+          <List disablePadding>
+            <Item>Operate synchronized rooms, controller registration, queues, playback recovery, and abuse/capacity controls.</Item>
+            <Item>Restore active room state after a graceful or unexpected server restart.</Item>
+            <Item>Allow authorized administrators to diagnose rooms, review minimized recent history, manage administrator access, and monitor API quota usage.</Item>
+            <Item>Protect the service, investigate failures, satisfy deletion requests, and demonstrate retention-policy operation.</Item>
+          </List>
+          <Typography color="text.secondary">We do not sell personal information or use YouTube API Data to create advertising profiles or undisclosed derived YouTube metrics.</Typography>
+        </Section>
+
+        <Section title="3. Storage and retention">
+          <List disablePadding>
+            <Item>Active room state remains available while the room is active and is closed after 24 hours without authenticated room activity.</Item>
+            <Item>When a room closes, controller identity/display-name records and room credentials are removed or revoked; remaining minimized room and selected-video history is retained in the live database for at most 28 days and never beyond 30 calendar days.</Item>
+            <Item>Locally metered YouTube API usage records are retained in the live database for at most 28 days and never beyond 30 calendar days.</Item>
+            <Item>Stored non-authorized YouTube API metadata is deleted before the 30-calendar-day boundary. Historical displays identify the time and context of the record.</Item>
+            <Item>Application-managed operational backups rotate within 24 hours so they do not extend API-data age beyond the disclosed limit. A deletion may remain only in that short-lived recovery copy until rotation completes.</Item>
+            <Item>Expired sessions and invitations are automatically removed. Browser-local preferences remain until you clear site data.</Item>
           </List>
         </Section>
 
-        <Section title="6. Your Rights and Choices">
-          <Typography paragraph sx={{ color: "text.secondary" }}>You have the right to:</Typography>
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>
-              • Access, update, or delete your personal information
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Opt out of non-essential cookies</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Request information about data we hold</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              • Lodge complaints with data protection authorities
-            </ListItem>
+        <Section title="4. Sharing and service providers">
+          <Typography color="text.secondary" paragraph>Information is shared only as necessary with:</Typography>
+          <List disablePadding>
+            <Item><strong>YouTube and Google:</strong>&nbsp;for searches, video metadata, embedded playback, Google administrator sign-in, and related security/abuse processing.</Item>
+            <Item><strong>Hosting and infrastructure providers:</strong>&nbsp;to run the application, encrypted transport, storage, logging, and backups.</Item>
+            <Item><strong>Legal or security recipients:</strong>&nbsp;when reasonably required to comply with law or protect users and the service.</Item>
           </List>
+          <Typography color="text.secondary">Embedded YouTube players may collect device, playback, cookie, and interaction information under Google’s policies. Playback is provided directly by YouTube.</Typography>
         </Section>
 
-        <Section title="7. Third-Party Services">
-          <Typography paragraph sx={{ color: "text.secondary" }}>Our service integrates with:</Typography>
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>
-              <strong style={{ color: "#F1F5F9" }}>YouTube API Services:</strong> Governed by{" "}
-              <Link
-                href="https://www.google.com/policies/privacy"
-                target="_blank"
-                rel="noopener noreferrer"
-                sx={{ color: "#8B5CF6" }}
-              >
-                Google's Privacy Policy
-              </Link>
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              <strong style={{ color: "#F1F5F9" }}>YouTube Terms of Service:</strong>{" "}
-              <Link
-                href="https://www.youtube.com/t/terms"
-                target="_blank"
-                rel="noopener noreferrer"
-                sx={{ color: "#8B5CF6" }}
-              >
-                https://www.youtube.com/t/terms
-              </Link>
-            </ListItem>
+        <Section title="5. Your choices and deletion requests">
+          <List disablePadding>
+            <Item>You may decline an updated policy, but functionality covered by that update will not be available.</Item>
+            <Item>You may clear browser-local preferences and room credentials through your browser’s site-data controls.</Item>
+            <Item>A room creator can permanently delete the active room and correlated stored data from Room Admin by confirming the full room ID.</Item>
+            <Item>You may also request access to or deletion of data related to you. We will remove applicable stored data as soon as reasonably possible and within seven calendar days.</Item>
+            <Item>Deleting data from this application does not delete information held by YouTube. Use YouTube or an authorized YouTube client to manage YouTube-held data.</Item>
           </List>
+          <Typography color="text.secondary">Send privacy and deletion requests through the <Link onClick={() => navigate("/contact")} sx={{ cursor: "pointer" }}>Contact page</Link>.</Typography>
         </Section>
 
-        <Section title="8. Children's Privacy">
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            Our service is not intended for children under 13. We do not knowingly
-            collect personal information from children under 13. If you believe we
-            have collected such information, please contact us immediately.
+        <Section title="6. Security">
+          <Typography color="text.secondary">
+            We use HTTPS in production, restricted administrative access, hashed bearer credentials, short-lived invitations, revocable server-side sessions, role-based access controls, CSRF protection, database access controls, and audited retention jobs. No internet service can guarantee absolute security.
           </Typography>
         </Section>
 
-        <Section title="9. Security">
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            We implement appropriate technical and organizational measures to
-            protect your information, including:
-          </Typography>
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>• Encryption of data in transit</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Regular security assessments</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Access controls and authentication</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>• Incident response procedures</ListItem>
-          </List>
+        <Section title="7. Children and international use">
+          <Typography color="text.secondary" paragraph>The service is not directed to children under 13. YouTube content may have its own age or regional restrictions. We look up the Made for Kids designation for selected videos and configure playback in accordance with applicable YouTube and privacy requirements.</Typography>
+          <Typography color="text.secondary">Information may be processed where the service and its providers operate. Users are responsible for ensuring their use complies with applicable local law.</Typography>
         </Section>
 
-        <Section title="10. Contact Information">
-          <Typography paragraph sx={{ color: "text.secondary" }}>
-            If you have any questions about this Privacy Policy, please contact
-            us:
+        <Section title="8. Policy changes and contact">
+          <Typography color="text.secondary">
+            Material changes receive a new effective-date version. Browsers that previously selected “Don’t ask me again” are prompted once to accept the new current version before affected functionality is available. Questions: <Link href="mailto:karaoke@zhong.au">karaoke@zhong.au</Link>.
           </Typography>
-          <List sx={{ pl: 2 }}>
-            <ListItem sx={{ color: "text.secondary" }}>• Email: karaoke@zhong.au</ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              • Contact Form:{" "}
-              <Link
-                onClick={() => navigate("/contact")}
-                sx={{ cursor: "pointer", color: "#8B5CF6" }}
-              >
-                Contact Us
-              </Link>
-            </ListItem>
-          </List>
         </Section>
-
-        <HighlightBox>
-          <Typography variant="body1" sx={{ fontWeight: 600, color: "text.primary", mb: 2 }}>
-            External References:
-          </Typography>
-          <List>
-            <ListItem sx={{ color: "text.secondary" }}>
-              <strong style={{ color: "#F1F5F9" }}>Google Privacy Policy:</strong>{" "}
-              <Link
-                href="https://www.google.com/policies/privacy"
-                target="_blank"
-                rel="noopener noreferrer"
-                sx={{ color: "#8B5CF6" }}
-              >
-                https://www.google.com/policies/privacy
-              </Link>
-            </ListItem>
-            <ListItem sx={{ color: "text.secondary" }}>
-              <strong style={{ color: "#F1F5F9" }}>YouTube Terms of Service:</strong>{" "}
-              <Link
-                href="https://www.youtube.com/t/terms"
-                target="_blank"
-                rel="noopener noreferrer"
-                sx={{ color: "#8B5CF6" }}
-              >
-                https://www.youtube.com/t/terms
-              </Link>
-            </ListItem>
-          </List>
-        </HighlightBox>
       </Container>
     </Box>
   );

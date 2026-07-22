@@ -1,17 +1,20 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import {
   BrowserRouter as Router,
   Routes,
   Route,
+  Navigate,
 } from "react-router-dom";
-import { ThemeProvider, createTheme, CssBaseline } from "@mui/material";
+import { Box, CircularProgress, CssBaseline, ThemeProvider, createTheme } from "@mui/material";
 import HomePage from "./components/HomePage.jsx";
-import Room from "./components/Room.jsx";
-import Control from "./components/Control.jsx";
-import PrivacyPolicy from "./components/PrivacyPolicy.jsx";
-import TermsOfService from "./components/TermsOfService.jsx";
-import Contact from "./components/Contact.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.jsx";
+
+const Room = lazy(() => import("./components/Room.jsx"));
+const Control = lazy(() => import("./components/Control.jsx"));
+const PrivacyPolicy = lazy(() => import("./components/PrivacyPolicy.jsx"));
+const TermsOfService = lazy(() => import("./components/TermsOfService.jsx"));
+const Contact = lazy(() => import("./components/Contact.jsx"));
+const AdminApp = lazy(() => import("./pages/AdminApp.jsx"));
 
 // Create cinematic dark theme
 const darkTheme = createTheme({
@@ -187,14 +190,18 @@ function App() {
       <ThemeProvider theme={darkTheme}>
         <CssBaseline />
         <Router>
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/room/:roomId" element={<Room />} />
-            <Route path="/control/:roomId" element={<Control />} />
-            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-            <Route path="/terms-of-service" element={<TermsOfService />} />
-            <Route path="/contact" element={<Contact />} />
-          </Routes>
+          <Suspense fallback={<Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center" }}><CircularProgress /></Box>}>
+            <Routes>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/room/:roomId" element={<Room />} />
+              <Route path="/control/:roomId" element={<Control />} />
+              <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+              <Route path="/terms-of-service" element={<TermsOfService />} />
+              <Route path="/contact" element={<Contact />} />
+              <Route path="/admin/*" element={<AdminApp />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </Router>
       </ThemeProvider>
     </ErrorBoundary>
