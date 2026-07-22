@@ -176,14 +176,56 @@ The implementation is designed to follow the current YouTube API Developer Polic
 
 ## Production deployment
 
-Build the frontend:
+For a simple single-server deployment, use Nginx for HTTPS and static files and PM2 for the Node process. The checked-in [ecosystem.config.js](ecosystem.config.js) runs exactly one fork-mode instance, restarts it after failure, and allows 15 seconds for the server's graceful shutdown. Keep it at one instance: the current SQLite deployment does not support PM2 cluster mode or multiple writable workers.
+
+Install dependencies, configure the application, and build the frontend:
 
 ```bash
+npm ci
+npm --prefix client ci
 npm --prefix client run build
-NODE_ENV=production npm start
+npm install --global pm2
+
+mkdir -p data backups
+chmod 700 data backups
+chmod 600 .env
 ```
 
-Serve `client/dist/` over HTTPS and proxy `/api/` and `/ws/` to the Node process. Start from [nginx.example.conf](nginx.example.conf), set the production origins and secrets, ensure the database/backup directories are writable only by the service account, and keep the Google OAuth origin configuration synchronized with the public URL.
+Set `NODE_ENV=production`, the public HTTPS origin, API credentials, and a stable `TOKEN_PEPPER` in the root `.env`. If administrator sign-in is enabled, set `VITE_GOOGLE_CLIENT_ID` in `client/.env.production.local` before building; it must match the server's `GOOGLE_CLIENT_ID` and the deployed URL must be an authorized Google OAuth JavaScript origin.
+
+Start the backend as the unprivileged deployment user, then register PM2 with the server's startup system:
+
+```bash
+pm2 start ecosystem.config.js
+pm2 startup
+# Run the sudo command printed by `pm2 startup`, then save the process list:
+pm2 save
+```
+
+Do not run `sudo pm2 start`: the PM2 process list and startup service belong to the user that runs the application. Verify the process, logs, and database readiness with:
+
+```bash
+pm2 status
+pm2 logs youtube-karaoke-together
+curl --fail http://127.0.0.1:8080/api/ready
+```
+
+Serve the contents of `client/dist/` over HTTPS and proxy `/api/` and `/ws/` to the Node process. Start from [nginx.example.conf](nginx.example.conf), set the Nginx document root to the deployed frontend files, and expose only ports 80 and 443 through the server firewall. Keep port 8080 private. Ensure the database and backup directories remain writable only by the deployment user. Production enables the application's daily, 24-hour-rotation backups by default.
+
+For an update from the repository directory:
+
+```bash
+git pull --ff-only
+npm ci
+npm --prefix client ci
+npm --prefix client run build
+# Copy the new client/dist contents to the Nginx document root, if it is separate.
+pm2 restart ecosystem.config.js --only youtube-karaoke-together --update-env
+pm2 save
+curl --fail http://127.0.0.1:8080/api/ready
+```
+
+Configure PM2 or system log rotation so process logs cannot grow without bound. After changing the installed Node.js version, rerun `pm2 startup` and the command it prints so the boot service uses the new Node.js path. See the [PM2 startup documentation](https://pm2.keymetrics.io/docs/usage/startup/) for the platform-specific details.
 
 ## License
 
