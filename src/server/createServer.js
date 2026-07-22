@@ -7,6 +7,7 @@ const helmet = require('helmet');
 const { rateLimit } = require('express-rate-limit');
 const QRCode = require('qrcode');
 const { Server } = require('socket.io');
+const { version } = require('../../package.json');
 const { AdminService } = require('./adminService');
 const { AppDatabase } = require('./database');
 const { RoomService } = require('./roomService');
@@ -82,7 +83,7 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
         await handler(req, res, admin);
     });
 
-    app.get('/api/health', (req, res) => res.json({ ok: true, version: '3.0.0' }));
+    app.get('/api/health', (req, res) => res.json({ ok: true, version }));
     app.get('/api/ready', (req, res) => db.health() ? res.json({ ok: true }) : res.status(503).json({ ok: false }));
 
     app.post('/api/rooms', createLimiter, asyncRoute(async (req, res) => {

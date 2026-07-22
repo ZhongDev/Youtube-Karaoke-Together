@@ -63,6 +63,7 @@ const Control = () => {
 
   // Auth state
   const [controllerKey, setControllerKey] = useState(() => getStoredControllerKey(roomId));
+  const [controllerId, setControllerId] = useState(null);
   const [authRetry, setAuthRetry] = useState(0);
   const [username, setUsername] = useState(() => {
     return getStoredPreferredUsername();
@@ -112,6 +113,7 @@ const Control = () => {
         .then((data) => {
           console.log('[INFO] Authenticated as:', data.username);
           setControllerKey(existingKey);
+          setControllerId(data.controllerId);
           setUsername(data.username);
           if (data.colorHue != null) setColorHue(data.colorHue);
         })
@@ -120,6 +122,7 @@ const Control = () => {
           if (["invalid_controller", "controller_removed"].includes(error.code)) {
             removeControllerKey(roomId);
             setControllerKey(null);
+            setControllerId(null);
             if (controlMasterKey) setShowNameModal(true);
             else setNotification({ open: true, message: "Your controller access was removed. Please scan a new QR code.", severity: "error" });
           } else if (error.code === "controller_disabled") {
@@ -168,6 +171,7 @@ const Control = () => {
     const handleRoomClosed = ({ reason } = {}) => {
       removeControllerKey(roomId);
       setControllerKey(null);
+      setControllerId(null);
       setRoomClosedReason(reason || "inactive");
       setNotification({ open: true, message: "This room closed after inactivity.", severity: "warning" });
     };
@@ -218,6 +222,7 @@ const Control = () => {
       if (["invalid_controller", "controller_removed"].includes(serverError.code)) {
         removeControllerKey(roomId);
         setControllerKey(null);
+        setControllerId(null);
       } else if (serverError.code === "controller_disabled") {
         setTimeout(() => setAuthRetry((value) => value + 1), 5000);
       }
@@ -288,6 +293,7 @@ const Control = () => {
       // Store the key
       storeControllerKey(roomId, data.controllerKey);
       setControllerKey(data.controllerKey);
+      setControllerId(data.controllerId);
       setUsername(data.username);
       if (data.colorHue != null) setColorHue(data.colorHue);
       sessionStorage.removeItem(`${STORAGE_KEYS.REGISTRATION_TOKEN_PREFIX}${roomId}`);
@@ -375,11 +381,13 @@ const Control = () => {
           socket={socket}
           isConnected={isConnected}
           notify={notify}
+          roundRobinEnabled={Boolean(settingsState.roundRobinEnabled)}
         />
       </Box>
       {currentTab === 1 && (
         <Queue
           controllerKey={controllerKey}
+          controllerId={controllerId}
           queueColorsEnabled={queueColorsEnabled}
           lyricsRomajiEnabled={lyricsRomajiEnabled}
         />

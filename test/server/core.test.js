@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { afterEach, test } = require('node:test');
 const { io: createClient } = require('socket.io-client');
+const { version } = require('../../package.json');
 const { AdminService } = require('../../src/server/adminService');
 const { loadConfig } = require('../../src/server/config');
 const { buildControlUrl, createServer } = require('../../src/server/createServer');
@@ -54,6 +55,7 @@ test('CORS compares normalized origins exactly', async () => {
     const allowed = await fetch(url, { headers: { Origin: 'https://karaoke.example.com' } });
     assert.equal(allowed.status, 200);
     assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://karaoke.example.com');
+    assert.deepEqual(await allowed.json(), { ok: true, version });
 
     const lookalike = await fetch(url, { headers: { Origin: 'https://karaoke.example.com.evil.test' } });
     assert.equal(lookalike.status, 403);
@@ -148,7 +150,7 @@ test('malformed socket payloads return structured errors without terminating the
     const guardedEvents = [
         'join-room-admin', 'register-controller', 'auth-controller', 'rename-controller',
         'update-controller-color', 'add-to-queue', 'play-next', 'player-play-next',
-        'request-room-state', 'remove-from-queue', 'update-settings', 'playback-state',
+        'request-room-state', 'remove-from-queue', 'reorder-queue', 'update-settings', 'playback-state',
         'admin-toggle-controller', 'admin-remove-controller', 'admin-toggle-registration',
     ];
     const noPayload = await new Promise((resolve) => {
@@ -206,6 +208,64 @@ test('queue mutations use stable IDs and duplicate advances are idempotent', () 
     db.close();
 });
 
+test('priority additions and room-wide queue reordering preserve the active video', () => {
+    const config = loadConfig({ nodeEnv: 'test', databasePath: ':memory:', tokenPepper: 'priority-pepper' }, quietLogger());
+    const db = new AppDatabase(':memory:', { logger: quietLogger() });
+    const service = new RoomService({ db, config, logger: quietLogger() });
+    const created = service.createRoom();
+    const singer = service.registerController(created.room.id, created.registrationToken, 'Singer');
+    service.addVideos(created.room.id, singer.controllerKey, [
+        { id: 'aaaaaaaaaaa', title: 'Playing' },
+        { id: 'bbbbbbbbbbb', title: 'Normal 1' },
+        { id: 'ccccccccccc', title: 'Normal 2' },
+    ]);
+    const playingQueueId = created.room.currentVideo.queueId;
+    service.addVideos(created.room.id, singer.controllerKey, [
+        { id: 'ddddddddddd', title: 'Priority 1' },
+        { id: 'eeeeeeeeeee', title: 'Priority 2' },
+    ], { priority: true });
+    assert.deepEqual(created.room.queue.map((item) => item.title), ['Priority 1', 'Priority 2', 'Normal 1', 'Normal 2']);
+    assert.equal(created.room.currentVideo.queueId, playingQueueId);
+
+    const reversedIds = created.room.queue.map((item) => item.queueId).reverse();
+    const reordered = service.reorderQueue(created.room.id, singer.controllerKey, reversedIds);
+    assert.equal(reordered.scope, 'room');
+    assert.deepEqual(created.room.queue.map((item) => item.queueId), reversedIds);
+    assert.throws(() => service.reorderQueue(created.room.id, singer.controllerKey, [reversedIds[0], reversedIds[0]]), /queue changed/i);
+    db.close();
+});
+
+test('round-robin priority and reordering only change a controller personal order', () => {
+    const config = loadConfig({ nodeEnv: 'test', databasePath: ':memory:', tokenPepper: 'round-robin-order-pepper' }, quietLogger());
+    const db = new AppDatabase(':memory:', { logger: quietLogger() });
+    const service = new RoomService({ db, config, logger: quietLogger() });
+    const created = service.createRoom();
+    const singerA = service.registerController(created.room.id, created.registrationToken, 'Singer A');
+    const singerB = service.registerController(created.room.id, created.registrationToken, 'Singer B');
+    service.updateSettings(created.room.id, singerA.controllerKey, { roundRobinEnabled: true });
+    service.addVideos(created.room.id, singerA.controllerKey, [
+        { id: 'aaaaaaaaaa1', title: 'A1' }, { id: 'aaaaaaaaaa2', title: 'A2' }, { id: 'aaaaaaaaaa3', title: 'A3' },
+    ]);
+    service.addVideos(created.room.id, singerB.controllerKey, [
+        { id: 'bbbbbbbbbb1', title: 'B1' }, { id: 'bbbbbbbbbb2', title: 'B2' },
+    ]);
+    service.addVideos(created.room.id, singerA.controllerKey, [{ id: 'aaaaaaaaaa0', title: 'A0' }], { priority: true });
+    service.addVideos(created.room.id, singerB.controllerKey, [{ id: 'bbbbbbbbbb0', title: 'B0' }], { priority: true });
+    assert.deepEqual(created.room.queue.map((item) => item.title), ['B0', 'A0', 'B1', 'A2', 'B2', 'A3']);
+
+    const reversedAIds = created.room.queue.filter((item) => item.controllerId === singerA.controller.id)
+        .map((item) => item.queueId).reverse();
+    const reordered = service.reorderQueue(created.room.id, singerA.controllerKey, reversedAIds);
+    assert.equal(reordered.scope, 'controller');
+    assert.deepEqual(created.room.queue.map((item) => item.title), ['B0', 'A3', 'B1', 'A2', 'B2', 'A0']);
+    assert.deepEqual(created.room.queue.filter((item) => item.controllerId === singerB.controller.id).map((item) => item.title), ['B0', 'B1', 'B2']);
+    assert.throws(
+        () => service.reorderQueue(created.room.id, singerB.controllerKey, created.room.queue.map((item) => item.queueId)),
+        /only allows reordering your own/i
+    );
+    db.close();
+});
+
 test('round-robin ordering tracks the last served stable controller ID', () => {
     const config = loadConfig({ nodeEnv: 'test', databasePath: ':memory:', tokenPepper: 'round-robin-pepper' }, quietLogger());
     const db = new AppDatabase(':memory:', { logger: quietLogger() });
@@ -237,15 +297,26 @@ test('active room state and hashed credentials survive a database restart', () =
     const registration = service.registerController(created.room.id, created.registrationToken, 'Persistent Singer');
     service.addVideos(created.room.id, registration.controllerKey, [
         { id: 'abcdefghijk', title: 'Persisted current' },
-        { id: 'lmnopqrstuv', title: 'Persisted queue' },
+        { id: 'lmnopqrstuv', title: 'Persisted queue 1' },
+        { id: 'wxyzABCDEFG', title: 'Persisted queue 2' },
     ]);
+    service.addVideos(created.room.id, registration.controllerKey, [
+        { id: 'hijklmnopqr', title: 'Persisted priority' },
+    ], { priority: true });
+    service.reorderQueue(
+        created.room.id,
+        registration.controllerKey,
+        created.room.queue.map((item) => item.queueId).reverse()
+    );
     db.close();
 
     db = new AppDatabase(filename, { logger: quietLogger() });
     service = new RoomService({ db, config, logger: quietLogger() });
     const restored = service.requireRoom(created.room.id);
     assert.equal(restored.currentVideo.title, 'Persisted current');
-    assert.equal(restored.queue[0].title, 'Persisted queue');
+    assert.deepEqual(restored.queue.map((item) => item.title), [
+        'Persisted queue 2', 'Persisted queue 1', 'Persisted priority',
+    ]);
     assert.equal(service.controller(restored, registration.controllerKey).name, 'Persistent Singer');
     assert.equal(service.validatePlayer(restored, created.playerKey), true);
     db.close();

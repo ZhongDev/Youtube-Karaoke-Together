@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { version } = require('./package.json');
 const { loadConfig } = require('./src/server/config');
 const { createServer } = require('./src/server/createServer');
 
@@ -29,7 +30,7 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 runtime.start().then((address) => {
-    console.info(`[INFO] Server v3.0.0 running on port ${address.port}`);
+    console.info(`[INFO] Server v${version} running on port ${address.port}`);
     console.info(`[INFO] Socket.IO path: ${config.socketPath}`);
     console.info(`[INFO] SQLite database: ${config.databasePath}`);
 }).catch((error) => {

@@ -246,7 +246,7 @@ class RoomService {
         };
     }
 
-    addVideos(roomId, token, videos) {
+    addVideos(roomId, token, videos, { priority = false } = {}) {
         const room = this.requireRoom(roomId);
         const previousCurrentQueueId = room.currentVideo?.queueId || null;
         const controller = this.controller(room, token);
@@ -266,10 +266,19 @@ class RoomService {
             };
         });
         if (!room.currentVideo && accepted.length > 0) this.setCurrentVideo(room, accepted.shift());
-        room.queue.push(...accepted);
+        if (priority && accepted.length > 0) {
+            if (room.settings.roundRobinEnabled) {
+                const firstOwnedIndex = room.queue.findIndex((item) => item.controllerId === controller.id);
+                room.queue.splice(firstOwnedIndex < 0 ? room.queue.length : firstOwnedIndex, 0, ...accepted);
+            } else {
+                room.queue.unshift(...accepted);
+            }
+        } else {
+            room.queue.push(...accepted);
+        }
         this.reorderRoundRobin(room);
         const addedCount = videos.length > capacity ? capacity : videos.length;
-        this.mutate(room, 'videos_queued', { count: addedCount });
+        this.mutate(room, 'videos_queued', { count: addedCount, priority: Boolean(priority) });
         this.db.updateRoomMetrics(room.id, { queuedDelta: addedCount });
         return {
             addedCount,
@@ -294,6 +303,54 @@ class RoomService {
         this.pruneParticipant(room, removed.controllerId);
         this.mutate(room, 'queue_item_removed', { queueId: String(queueId) });
         return removed;
+    }
+
+    reorderQueue(roomId, token, orderedQueueIds) {
+        const room = this.requireRoom(roomId);
+        const controller = this.controller(room, token);
+        if (!Array.isArray(orderedQueueIds) || orderedQueueIds.length > this.config.limits.maxQueueLengthPerRoom) {
+            throw new AppError('invalid_queue_order', 'Queue order must be a bounded list of queue item IDs');
+        }
+        const normalizedIds = orderedQueueIds.map((queueId) => {
+            if (!isIdentifier(queueId, 128)) throw new AppError('invalid_queue_order', 'Queue order contains an invalid item ID');
+            return String(queueId);
+        });
+        const scopedItems = room.settings.roundRobinEnabled
+            ? room.queue.filter((item) => item.controllerId === controller.id)
+            : room.queue;
+        const expectedIds = new Set(scopedItems.map((item) => String(item.queueId)));
+        const providedIds = new Set(normalizedIds);
+        if (normalizedIds.length !== scopedItems.length || providedIds.size !== normalizedIds.length ||
+            normalizedIds.some((queueId) => !expectedIds.has(queueId))) {
+            throw new AppError(
+                'queue_order_conflict',
+                room.settings.roundRobinEnabled
+                    ? 'Round-robin mode only allows reordering your own current queue items'
+                    : 'The queue changed before the reorder could be applied',
+                409
+            );
+        }
+
+        const before = room.queue.map((item) => String(item.queueId));
+        const scopedItemsById = new Map(scopedItems.map((item) => [String(item.queueId), item]));
+        const orderedItems = normalizedIds.map((queueId) => scopedItemsById.get(queueId));
+        if (room.settings.roundRobinEnabled) {
+            let ownedIndex = 0;
+            room.queue = room.queue.map((item) => item.controllerId === controller.id ? orderedItems[ownedIndex++] : item);
+            this.reorderRoundRobin(room);
+        } else {
+            room.queue = orderedItems;
+        }
+        const after = room.queue.map((item) => String(item.queueId));
+        const changed = before.some((queueId, index) => queueId !== after[index]);
+        if (changed) {
+            this.mutate(room, 'queue_reordered', {
+                controllerId: controller.id,
+                scope: room.settings.roundRobinEnabled ? 'controller' : 'room',
+                count: normalizedIds.length,
+            });
+        }
+        return { changed, scope: room.settings.roundRobinEnabled ? 'controller' : 'room', room };
     }
 
     advance(roomId, credential, expectedQueueId, actor = 'controller') {

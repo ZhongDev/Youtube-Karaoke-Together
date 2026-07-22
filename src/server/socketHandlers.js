@@ -150,10 +150,11 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
             return { colorHue: controller.colorHue };
         });
 
-        on('add-to-queue', async ({ roomId, video, controllerKey }) => {
+        on('add-to-queue', async ({ roomId, video, controllerKey, addToTop }) => {
             const room = roomService.requireRoom(roomId);
             roomService.controller(room, controllerKey);
             if (!video || typeof video !== 'object') throw new AppError('invalid_video', 'Invalid video data');
+            if (addToTop !== undefined && typeof addToTop !== 'boolean') throw new AppError('invalid_queue_priority', 'Queue priority must be a boolean');
             const capacity = roomService.remainingQueueCapacity(room);
             if (capacity <= 0) throw new AppError('queue_full', 'Queue is at maximum capacity', 409);
             let videos;
@@ -166,7 +167,7 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
                 videos = await youtubeService.lookupVideos([video.id], room.id);
                 if (videos.length === 0) throw new AppError('video_unavailable', 'This video is unavailable or not public', 404);
             }
-            const result = roomService.addVideos(room.id, controllerKey, videos);
+            const result = roomService.addVideos(room.id, controllerKey, videos, { priority: addToTop === true });
             if (result.currentChanged) io.to(room.id).emit('video-changed', room.currentVideo);
             io.to(room.id).emit('queue-updated', room.queue);
             socket.emit('queue-add-result', { addedCount: result.addedCount, skippedCount: result.skippedCount });
@@ -207,6 +208,13 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
             roomService.removeFromQueue(roomId, controllerKey, queueId);
             const room = roomService.requireRoom(roomId);
             io.to(room.id).emit('queue-updated', room.queue);
+        });
+
+        on('reorder-queue', ({ roomId, orderedQueueIds, controllerKey }) => {
+            const result = roomService.reorderQueue(roomId, controllerKey, orderedQueueIds);
+            const room = roomService.requireRoom(roomId);
+            if (result.changed) io.to(room.id).emit('queue-updated', room.queue);
+            return { changed: result.changed, scope: result.scope };
         });
 
         on('update-settings', ({ roomId, settings, controllerKey }) => {
