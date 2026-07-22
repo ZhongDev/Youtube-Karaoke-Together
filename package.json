@@ -14,7 +14,7 @@
     "test": "node --test test/**/*.test.js",
     "test:client": "npm --prefix client test",
     "test:all": "npm test && npm run test:client",
-    "check:syntax": "for file in server.js src/server/*.js scripts/*.js; do node --check \"$file\"; done",
+    "check:syntax": "for file in server.js ecosystem.config.js src/server/*.js scripts/*.js; do node --check \"$file\"; done",
     "check": "npm run check:syntax && node --test test/**/*.test.js && npm --prefix client run test:run && npm --prefix client run build",
     "admin:bootstrap": "node scripts/admin-bootstrap.js",
     "admin:recover": "node scripts/admin-recover.js",

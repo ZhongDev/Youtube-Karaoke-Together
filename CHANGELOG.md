@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Added authenticated, stale-item-safe playback commands that are acknowledged by the server and forwarded only to the room player
 - Added room-level volume persistence across video changes, reconnects, and SQLite-backed server restarts
 - Added service, Socket.IO, controller UI, and player-adapter tests for playback commands and persistence
+- Added a checked-in PM2 ecosystem configuration for a single restartable production process with graceful shutdown
 
 ### Changed
 
@@ -24,6 +25,7 @@ All notable changes to this project will be documented in this file.
 ### Documentation
 
 - Updated the root and client READMEs with controller playback controls and persistent-volume behavior
+- Documented a simple PM2 and Nginx production setup, verification flow, reboot persistence, and update procedure
 
 ## [3.1.0] - Queue Ordering
 
