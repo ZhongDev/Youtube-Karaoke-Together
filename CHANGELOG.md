@@ -6,6 +6,28 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Added controller playback controls for timeline seeking, exact `(hh:)mm:ss(.000)` time entry with duration validation, −15/+15 second jumps, play/pause, and room volume
+- Added authenticated, stale-item-safe playback commands that are acknowledged by the server and forwarded only to the room player
+- Added room-level volume persistence across video changes, reconnects, and SQLite-backed server restarts
+- Added service, Socket.IO, controller UI, and player-adapter tests for playback commands and persistence
+
+### Changed
+
+- Room players now restore paused playback intent and saved volume instead of always forcing resumed videos to play
+- Bumped the root and client application versions to 3.2.0
+
+### Fixed
+
+- Released paused-checkpoint enforcement after restoration so the room player’s native controls can resume playback normally
+
+### Documentation
+
+- Updated the root and client READMEs with controller playback controls and persistent-volume behavior
+
+## [3.1.0] - Queue Ordering
+
+### Added
+
 - Added a confirmed “add to top” action beside the standard controller search-result add button
 - Added accessible mouse, touch, and keyboard queue reordering from left-side handles on the controller Queue tab
 - Added server-side queue-order validation, persistence, auditing, and realtime synchronization with optimistic client updates and stale-order recovery

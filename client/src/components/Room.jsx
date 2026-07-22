@@ -33,6 +33,15 @@ import Tooltip from "@mui/material/Tooltip";
 import useSocket from "../hooks/useSocket";
 import { getBackendUrl, getStoredPlayerKey, removePlayerKey, storePlayerKey, STORAGE_KEYS, decodeHtmlEntities } from "../config";
 import { playerResumeSeconds, playerVideoIdentity, shouldLoadPlayerVideo } from "../features/room/playerIdentity";
+import {
+  applyPlayerCommand,
+  loadPlayerVideo,
+  playerPlaybackSnapshot,
+  playbackVolume,
+  playerCommandMatchesVideo,
+  playerPlaybackMatchesVideo,
+  reconcilePlayerIntent,
+} from "../features/room/playerControls";
 
 const PLAYER_OPTIONS = {
   host: "https://www.youtube-nocookie.com",
@@ -55,6 +64,9 @@ const Room = () => {
   const [searchParams] = useSearchParams();
   const playerRef = useRef(null);
   const loadedVideoIdentityRef = useRef(null);
+  const currentVideoRef = useRef(null);
+  const playbackRef = useRef(null);
+  const pausedRestoreIdentityRef = useRef(null);
   const roomContainerRef = useRef(null);
 
   // Get playerKey from URL or localStorage
@@ -246,6 +258,8 @@ const Room = () => {
 
     const handleRoomStateAdmin = (room) => {
       console.log("[INFO] Received admin room state:", room);
+      currentVideoRef.current = room.currentVideo;
+      playbackRef.current = room.playback || null;
       setCurrentVideo(room.currentVideo);
       setQueue(room.queue || []);
       setPlayback(room.playback || null);
@@ -257,6 +271,8 @@ const Room = () => {
 
     const handleRoomState = (room) => {
       console.log("[INFO] Received room state:", room);
+      currentVideoRef.current = room.currentVideo;
+      playbackRef.current = room.playback || null;
       setCurrentVideo(room.currentVideo);
       setQueue(room.queue || []);
       setPlayback(room.playback || null);
@@ -268,6 +284,7 @@ const Room = () => {
     const handleVideoChanged = (video) => {
       console.log("[INFO] Video changed:", video);
       if (!video || shouldLoadPlayerVideo(loadedVideoIdentityRef.current, video)) setPlayerError(null);
+      currentVideoRef.current = video;
       setCurrentVideo(video);
 
       if (video === null) {
@@ -276,6 +293,7 @@ const Room = () => {
           playerRef.current.clearVideo();
         }
         loadedVideoIdentityRef.current = null;
+        pausedRestoreIdentityRef.current = null;
         return;
       }
       // Metadata-only updates retain the same queue identity. The loading effect below
@@ -295,11 +313,25 @@ const Room = () => {
     const handleRegistrationStatus = ({ allowNewControllers: allow }) => {
       setAllowNewControllers(allow);
     };
-    const handlePlaybackUpdated = (pb) => setPlayback(pb);
+    const handlePlaybackUpdated = (pb) => {
+      playbackRef.current = pb;
+      setPlayback(pb);
+    };
+    const handlePlayerCommand = (command) => {
+      if (!playerCommandMatchesVideo(command, currentVideoRef.current)) return;
+      if (command.type === "play") pausedRestoreIdentityRef.current = null;
+      if (command.type === "seek" && Number.isFinite(command.positionSec)) {
+        playbackRef.current = { ...playbackRef.current, positionSec: command.positionSec };
+      }
+      applyPlayerCommand(playerRef.current, command);
+    };
     const handleSettingsUpdated = (settings) =>
       setSettingsState(settings || { roundRobinEnabled: false });
     const handleRoomClosed = ({ reason } = {}) => {
       removePlayerKey(roomId);
+      currentVideoRef.current = null;
+      playbackRef.current = null;
+      pausedRestoreIdentityRef.current = null;
       setCurrentVideo(null);
       setQueue([]);
       setRoomClosedReason(reason || "inactive");
@@ -311,6 +343,7 @@ const Room = () => {
     socket.on("video-changed", handleVideoChanged);
     socket.on("queue-updated", handleQueueUpdated);
     socket.on("playback-updated", handlePlaybackUpdated);
+    socket.on("player-command", handlePlayerCommand);
     socket.on("settings-updated", handleSettingsUpdated);
     socket.on("controllers-updated", handleControllersUpdated);
     socket.on("registration-status", handleRegistrationStatus);
@@ -322,6 +355,7 @@ const Room = () => {
       socket.off("video-changed", handleVideoChanged);
       socket.off("queue-updated", handleQueueUpdated);
       socket.off("playback-updated", handlePlaybackUpdated);
+      socket.off("player-command", handlePlayerCommand);
       socket.off("settings-updated", handleSettingsUpdated);
       socket.off("controllers-updated", handleControllersUpdated);
       socket.off("registration-status", handleRegistrationStatus);
@@ -351,19 +385,37 @@ const Room = () => {
       const incomingId = currentVideo?.id;
       const startSeconds = computeStartSeconds(currentVideo);
       if (shouldLoadPlayerVideo(loadedVideoIdentityRef.current, currentVideo)) {
-        playerRef.current.loadVideoById({
-          videoId: incomingId,
-          startSeconds: startSeconds,
-        });
+        const incomingIdentity = playerVideoIdentity(currentVideo);
+        pausedRestoreIdentityRef.current = playerPlaybackMatchesVideo(playback, currentVideo) &&
+          ["paused", "cued"].includes(playback?.state) ? incomingIdentity : null;
+        loadedVideoIdentityRef.current = loadPlayerVideo(
+          playerRef.current,
+          currentVideo,
+          playback,
+          startSeconds
+        );
         console.log(
           "[INFO] Loaded video:",
           incomingId,
           "with startSeconds:",
           startSeconds
         );
-        playerRef.current.playVideo();
-        loadedVideoIdentityRef.current = playerVideoIdentity(currentVideo);
       }
+    } catch (_) {}
+  };
+
+  const onPlayerStateChange = (event) => {
+    try {
+      const identity = playerVideoIdentity(currentVideoRef.current);
+      const restorePaused = pausedRestoreIdentityRef.current === identity;
+      const restoreComplete = reconcilePlayerIntent(
+        event.target,
+        currentVideoRef.current,
+        playbackRef.current,
+        event.data,
+        restorePaused
+      );
+      if (restoreComplete) pausedRestoreIdentityRef.current = null;
     } catch (_) {}
   };
 
@@ -374,14 +426,24 @@ const Room = () => {
 
     if (shouldLoadPlayerVideo(loadedVideoIdentityRef.current, currentVideo)) {
       try {
-        const incomingId = currentVideo.id;
         const startSeconds = computeStartSeconds(currentVideo);
-        playerRef.current.loadVideoById({ videoId: incomingId, startSeconds });
-        playerRef.current.playVideo();
-        loadedVideoIdentityRef.current = playerVideoIdentity(currentVideo);
+        const incomingIdentity = playerVideoIdentity(currentVideo);
+        pausedRestoreIdentityRef.current = playerPlaybackMatchesVideo(playback, currentVideo) &&
+          ["paused", "cued"].includes(playback?.state) ? incomingIdentity : null;
+        loadedVideoIdentityRef.current = loadPlayerVideo(
+          playerRef.current,
+          currentVideo,
+          playback,
+          startSeconds
+        );
       } catch (_) {}
     }
-  }, [isPlayerReady, currentVideo, computeStartSeconds]);
+  }, [isPlayerReady, currentVideo, playback, computeStartSeconds]);
+
+  useEffect(() => {
+    if (!isPlayerReady || !playerRef.current) return;
+    try { playerRef.current.setVolume(playbackVolume(playback)); } catch (_) {}
+  }, [isPlayerReady, playback?.volume]);
 
   const onVideoEnd = () => {
     if (!currentVideo || loadedVideoIdentityRef.current !== playerVideoIdentity(currentVideo)) return;
@@ -403,27 +465,24 @@ const Room = () => {
       if (!playerRef.current) return;
       try {
         const player = playerRef.current;
-        // YouTube IFrame API returns these as functions
-        const state = typeof player.getPlayerState === 'function' ? player.getPlayerState() : -1;
-        const stateMap = {
-          [-1]: "unstarted",
-          0: "ended",
-          1: "playing",
-          2: "paused",
-          3: "buffering",
-          5: "cued",
-        };
-        const positionSec = typeof player.getCurrentTime === 'function' ? player.getCurrentTime() : 0;
-        const durationSec = typeof player.getDuration === 'function' ? player.getDuration() : null;
+        const identity = playerVideoIdentity(currentVideo);
+        let restorePaused = pausedRestoreIdentityRef.current === identity;
+        if (restorePaused) {
+          const stateCode = typeof player.getPlayerState === "function" ? player.getPlayerState() : -1;
+          if (reconcilePlayerIntent(player, currentVideo, playbackRef.current, stateCode, true)) {
+            pausedRestoreIdentityRef.current = null;
+            restorePaused = false;
+          }
+        }
+        const snapshot = playerPlaybackSnapshot(player, currentVideo, playbackRef.current, restorePaused);
+        if (!snapshot) return;
         
         socket.emit("playback-state", {
           roomId,
           playerKey,
-          state: stateMap[state] || "unstarted",
-          positionSec: positionSec || 0,
-          durationSec: durationSec > 0 ? durationSec : null,
           videoId: currentVideo?.id || null,
           queueId: currentVideo?.queueId || null,
+          ...snapshot,
         });
       } catch (err) {
         console.error("[ERR] Failed to get playback state:", err);
@@ -494,12 +553,12 @@ const Room = () => {
 
   // If socket disconnects, try to keep playback going
   useEffect(() => {
-    if (!isConnected && playerRef.current) {
+    if (!isConnected && playback?.state === "playing" && playerRef.current) {
       try {
         playerRef.current.playVideo();
       } catch (_) {}
     }
-  }, [isConnected]);
+  }, [isConnected, playback?.state]);
 
   if (roomClosedReason) {
     return <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: 3 }}>
@@ -644,9 +703,9 @@ const Room = () => {
               }}
             >
               <YouTube
-                videoId={currentVideo?.id || undefined}
                 opts={PLAYER_OPTIONS}
                 onReady={onPlayerReady}
+                onStateChange={onPlayerStateChange}
                 onEnd={onVideoEnd}
                 onError={(error) => {
                   console.error("[ERR] YouTube player error:", error);

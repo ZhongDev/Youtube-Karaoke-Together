@@ -229,6 +229,13 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
             io.to(roomId).emit('playback-updated', playback);
         });
 
+        on('control-playback', ({ roomId, controllerKey, command }) => {
+            const result = roomService.controlPlayback(roomId, controllerKey, command);
+            io.to(`${roomId}:player-admin`).emit('player-command', result.playerCommand);
+            io.to(roomId).emit('playback-updated', result.playback);
+            return { playback: result.playback };
+        });
+
         on('admin-toggle-controller', ({ roomId, playerKey, controllerId, enabled }) => {
             if (!isIdentifier(controllerId, 128) || typeof enabled !== 'boolean') throw new AppError('invalid_controller_update', 'Invalid controller update');
             roomService.toggleController(roomId, playerKey, controllerId, enabled);
