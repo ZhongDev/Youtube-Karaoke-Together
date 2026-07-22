@@ -368,7 +368,7 @@ const Control = () => {
         registering={isRegistering} onRegister={handleRegister}
       />
 
-      {currentTab === 0 && (
+      <Box role="tabpanel" hidden={currentTab !== 0}>
         <SearchTab
           roomId={roomId}
           controllerKey={controllerKey}
@@ -376,7 +376,7 @@ const Control = () => {
           isConnected={isConnected}
           notify={notify}
         />
-      )}
+      </Box>
       {currentTab === 1 && (
         <Queue
           controllerKey={controllerKey}

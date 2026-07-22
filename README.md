@@ -11,7 +11,7 @@ YouTube Karaoke Together is a collaborative YouTube queue with a shared room/pla
 - Stable queue-item IDs and duplicate-safe skip/auto-advance
 - SQLite-backed room, queue, controller, settings, and playback recovery
 - Inactivity-based room closure and minimized room/video history for no more than 30 days
-- Google-authenticated administrator dashboard for active rooms, recent history, YouTube API usage, administrators, and security audit events
+- Google-authenticated administrator dashboard for active rooms, recent history, YouTube API usage and configurable quota limits, administrators, and security audit events
 - Versioned Terms/privacy acceptance, including one-time migration for browsers that previously selected “Don’t ask me again”
 
 ## Requirements
@@ -89,7 +89,7 @@ The development UI runs at `http://localhost:3000`; the API and Socket.IO server
 
 4. Open `/admin/bootstrap`, enter the code, and complete Google sign-in. Subsequent administrators must use an owner-created invitation from the dashboard.
 
-Roles are `owner`, `admin`, and `viewer`. Owners manage invitations, roles, account status, and sessions; the last enabled owner cannot be demoted or disabled. If all owner access is accidentally lost, an operator with server/database access can recover an existing linked identity:
+Roles are `owner`, `admin`, and `viewer`. Administrators and owners can align the locally displayed YouTube quota limits with Google-approved increases; viewers have read-only access. Owners additionally manage invitations, roles, account status, and sessions; the last enabled owner cannot be demoted or disabled. If all owner access is accidentally lost, an operator with server/database access can recover an existing linked identity:
 
 ```bash
 npm run admin:recover -- owner@example.com
@@ -131,6 +131,8 @@ Every YouTube request is routed through the metered service and records method, 
 - Quota days use midnight Pacific Time
 
 This catalog reflects Google's granular quota model documented by the [official YouTube Data API quota calculator](https://developers.google.com/youtube/v3/determine_quota_cost). Dashboard values are local estimates. The Google Cloud Console remains authoritative, particularly for custom quota allocations or future Google policy changes.
+
+Administrators and owners can edit the three daily bucket limits from the API Usage tab when Google grants a quota increase. Overrides are validated, audited, and stored in SQLite across restarts. They affect dashboard utilization percentages only: they neither modify per-method costs nor request quota from or enforce quota at Google. “Restore defaults” removes all local overrides.
 
 ## Architecture
 

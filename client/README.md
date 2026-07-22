@@ -40,6 +40,8 @@ npm run test:run  # one complete client test run
 - `hooks/useSocket.js`: shared connection plus precisely scoped request/listener helpers
 - `config.js`: runtime connection and storage-key helpers
 
-The room, controller, legal, and admin routes are lazy loaded. `Control.jsx` is a route-level composer rather than the former all-in-one controller. Search pagination ignores stale responses; controller mutations use request-correlated Socket.IO acknowledgements.
+The room, controller, legal, and admin routes are lazy loaded. `Control.jsx` is a route-level composer rather than the former all-in-one controller. Search pagination ignores stale responses, and the search panel stays mounted so its query and results survive controller tab changes. Controller mutations use request-correlated Socket.IO acknowledgements. Room playback identity is based on stable queue-item IDs, preventing controller metadata and queue updates from restarting the active video while still allowing the same YouTube video to be queued consecutively.
+
+The API Usage dashboard shows Google&apos;s catalog defaults alongside persisted local limits. `admin` and `owner` roles can edit or restore those limits; `viewer` access remains read-only. Local limits change dashboard comparisons only and do not alter Google&apos;s enforced quota.
 
 See the [main README](../README.md) for server configuration, administrator onboarding, persistence, deployment, and privacy/retention behavior.

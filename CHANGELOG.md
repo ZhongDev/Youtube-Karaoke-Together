@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Google Identity Services administrator sign-in with one-time first-owner bootstrap, invitations, revocable sessions, CSRF protection, and owner/admin/viewer roles
 - Lazy-loaded administrator dashboard for active rooms, recent history, room detail, connected/peak client counts, YouTube API usage, administrator access, and audit events
 - Locally metered, versioned YouTube quota catalog with separate search, general, and video-upload buckets and Pacific-Time reporting
+- SQLite-persisted, audited daily quota-limit overrides editable by administrator and owner roles, with one-click restoration to catalog defaults
 - Bounded server-side playlist expansion and playable/public-video validation through the YouTube API
 - Versioned privacy consent and a one-time updated-policy modal for browsers carrying the legacy `tosDoNotAsk` preference
 - Creator-authenticated permanent deletion for active room data, including correlated API usage and anonymous policy records
@@ -39,6 +40,8 @@ All notable changes to this project will be documented in this file.
 - Preserved controller credentials across transient disconnects/timeouts while distinguishing disabled, removed, and invalid credentials
 - Added precise socket listener cleanup, request-correlated acknowledgements, scoped room membership and search authorization, stale search-response protection, and playback validation/reset behavior
 - Added visible retry/skip recovery for YouTube player failures and canonical display-boundary title decoding
+- Prevented controller color/name metadata updates and additions behind the active item from restarting room playback; player transitions now follow stable queue-item identity
+- Preserved controller search queries and results when switching between controller tabs
 
 ### Security
 

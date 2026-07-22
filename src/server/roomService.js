@@ -53,6 +53,7 @@ class RoomService {
                 durationSec: null,
                 updatedAt: now,
                 videoId: null,
+                queueId: null,
             },
             allowNewControllers: true,
             nextQueueId: 1,
@@ -247,6 +248,7 @@ class RoomService {
 
     addVideos(roomId, token, videos) {
         const room = this.requireRoom(roomId);
+        const previousCurrentQueueId = room.currentVideo?.queueId || null;
         const controller = this.controller(room, token);
         if (!Array.isArray(videos) || videos.length === 0) throw new AppError('invalid_video', 'No videos were provided');
         const capacity = this.remainingQueueCapacity(room);
@@ -269,7 +271,12 @@ class RoomService {
         const addedCount = videos.length > capacity ? capacity : videos.length;
         this.mutate(room, 'videos_queued', { count: addedCount });
         this.db.updateRoomMetrics(room.id, { queuedDelta: addedCount });
-        return { addedCount, skippedCount: videos.length - addedCount, room };
+        return {
+            addedCount,
+            skippedCount: videos.length - addedCount,
+            currentChanged: (room.currentVideo?.queueId || null) !== previousCurrentQueueId,
+            room,
+        };
     }
 
     remainingQueueCapacity(room) {
@@ -327,6 +334,9 @@ class RoomService {
         if (position !== undefined && (!Number.isFinite(position) || position < 0)) throw new AppError('invalid_playback', 'Invalid playback position');
         if (duration !== undefined && duration !== null && (!Number.isFinite(duration) || duration < 0)) throw new AppError('invalid_playback', 'Invalid playback duration');
         if (Number.isFinite(position) && Number.isFinite(duration) && position > duration + 5) throw new AppError('invalid_playback', 'Playback position exceeds duration');
+        if (update.queueId !== undefined && update.queueId !== null && String(update.queueId) !== String(room.currentVideo?.queueId)) {
+            throw new AppError('stale_playback', 'Playback update is for a stale queue item');
+        }
         if (update.videoId !== undefined && update.videoId !== null && update.videoId !== room.currentVideo?.id) {
             throw new AppError('stale_playback', 'Playback update is for a stale video');
         }
@@ -334,6 +344,7 @@ class RoomService {
         if (position !== undefined) room.playback.positionSec = position;
         if (duration !== undefined) room.playback.durationSec = duration;
         room.playback.videoId = room.currentVideo?.id || null;
+        room.playback.queueId = room.currentVideo?.queueId || null;
         room.playback.updatedAt = Date.now();
         room.lastActivityAt = Date.now();
         const lastCheckpoint = this.lastPlaybackCheckpoint.get(room.id) || 0;
@@ -354,6 +365,7 @@ class RoomService {
             durationSec: null,
             updatedAt: Date.now(),
             videoId: video?.id || null,
+            queueId: video?.queueId || null,
         };
         if (video?.controllerId) {
             this.upsertParticipant(room, video.controllerId);

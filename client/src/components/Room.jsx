@@ -32,13 +32,29 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import Tooltip from "@mui/material/Tooltip";
 import useSocket from "../hooks/useSocket";
 import { getBackendUrl, getStoredPlayerKey, removePlayerKey, storePlayerKey, STORAGE_KEYS, decodeHtmlEntities } from "../config";
+import { playerResumeSeconds, playerVideoIdentity, shouldLoadPlayerVideo } from "../features/room/playerIdentity";
+
+const PLAYER_OPTIONS = {
+  host: "https://www.youtube-nocookie.com",
+  height: "100%",
+  width: "100%",
+  playerVars: {
+    autoplay: 1,
+    modestbranding: 1,
+    rel: 0,
+    playsinline: 1,
+    mute: 0,
+    enablejsapi: 1,
+    fs: 0,
+  },
+};
 
 const Room = () => {
   const { roomId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const playerRef = useRef(null);
-  const lastVideoIdRef = useRef(null);
+  const loadedVideoIdentityRef = useRef(null);
   const roomContainerRef = useRef(null);
 
   // Get playerKey from URL or localStorage
@@ -58,7 +74,6 @@ const Room = () => {
   const [controlUrl, setControlUrl] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [currentVideo, setCurrentVideo] = useState(null);
-  const [initialStartSeconds, setInitialStartSeconds] = useState(null);
   const [queue, setQueue] = useState([]);
   const [playback, setPlayback] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -96,19 +111,7 @@ const Room = () => {
 
   // Compute resume position based on playback snapshot
   const computeStartSeconds = useCallback(
-    (videoId) => {
-      if (!playback) return 0;
-      if (playback.videoId && playback.videoId !== videoId) return 0;
-      const pos =
-        typeof playback.positionSec === "number" ? playback.positionSec : 0;
-      const dur =
-        typeof playback.durationSec === "number" ? playback.durationSec : null;
-      const clamped =
-        dur != null
-          ? Math.min(Math.max(0, pos), Math.max(0, dur - 0.75))
-          : Math.max(0, pos);
-      return clamped;
-    },
+    (video) => playerResumeSeconds(playback, video),
     [playback]
   );
 
@@ -264,7 +267,7 @@ const Room = () => {
 
     const handleVideoChanged = (video) => {
       console.log("[INFO] Video changed:", video);
-      setPlayerError(null);
+      if (!video || shouldLoadPlayerVideo(loadedVideoIdentityRef.current, video)) setPlayerError(null);
       setCurrentVideo(video);
 
       if (video === null) {
@@ -272,30 +275,11 @@ const Room = () => {
           playerRef.current.pauseVideo();
           playerRef.current.clearVideo();
         }
-        lastVideoIdRef.current = null;
+        loadedVideoIdentityRef.current = null;
         return;
       }
-
-      const incomingId = video?.id;
-      if (incomingId && lastVideoIdRef.current === incomingId) {
-        // Same video ID re-queued; force a restart
-        if (playerRef.current) {
-          try {
-            playerRef.current.loadVideoById({ videoId: incomingId, startSeconds: 0 });
-            playerRef.current.playVideo();
-          } catch (err) {
-            try {
-              playerRef.current.seekTo(0, true);
-              playerRef.current.playVideo();
-            } catch (_) {}
-          }
-        } else {
-          // Ensure it reloads when player becomes ready
-          lastVideoIdRef.current = null;
-        }
-        return;
-      }
-      // Note: actual video loading is handled by the separate useEffect that watches currentVideo
+      // Metadata-only updates retain the same queue identity. The loading effect below
+      // is responsible for changing playback only when that identity changes.
     };
 
     const handleQueueUpdated = (newQueue) => {
@@ -365,32 +349,20 @@ const Room = () => {
     setIsPlayerReady(true);
     try {
       const incomingId = currentVideo?.id;
-      const startSeconds = computeStartSeconds(incomingId);
-      if (incomingId) {
-        const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
-        if (!alreadyLoadedSameVideo) {
-          playerRef.current.loadVideoById({
-            videoId: incomingId,
-            startSeconds: startSeconds,
-          });
-          setInitialStartSeconds(startSeconds);
-          console.log(
-            "[INFO] Loaded video:",
-            incomingId,
-            "with startSeconds:",
-            startSeconds
-          );
-          playerRef.current.playVideo();
-          lastVideoIdRef.current = incomingId;
-        } else {
-          playerRef.current.seekTo(Math.round(initialStartSeconds ?? 0), true);
-          console.log(
-            "[INFO] Seeking to:",
-            initialStartSeconds ?? 0,
-            "for video:",
-            incomingId
-          );
-        }
+      const startSeconds = computeStartSeconds(currentVideo);
+      if (shouldLoadPlayerVideo(loadedVideoIdentityRef.current, currentVideo)) {
+        playerRef.current.loadVideoById({
+          videoId: incomingId,
+          startSeconds: startSeconds,
+        });
+        console.log(
+          "[INFO] Loaded video:",
+          incomingId,
+          "with startSeconds:",
+          startSeconds
+        );
+        playerRef.current.playVideo();
+        loadedVideoIdentityRef.current = playerVideoIdentity(currentVideo);
       }
     } catch (_) {}
   };
@@ -400,20 +372,19 @@ const Room = () => {
     if (!isPlayerReady || !playerRef.current) return;
     if (!currentVideo || !currentVideo.id) return;
 
-    const incomingId = currentVideo.id;
-    const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
-    if (!alreadyLoadedSameVideo) {
+    if (shouldLoadPlayerVideo(loadedVideoIdentityRef.current, currentVideo)) {
       try {
-        const startSeconds = computeStartSeconds(incomingId);
+        const incomingId = currentVideo.id;
+        const startSeconds = computeStartSeconds(currentVideo);
         playerRef.current.loadVideoById({ videoId: incomingId, startSeconds });
         playerRef.current.playVideo();
-        lastVideoIdRef.current = incomingId;
+        loadedVideoIdentityRef.current = playerVideoIdentity(currentVideo);
       } catch (_) {}
     }
-  }, [isPlayerReady, currentVideo, playerRef, computeStartSeconds]);
+  }, [isPlayerReady, currentVideo, computeStartSeconds]);
 
   const onVideoEnd = () => {
-    if (!currentVideo || lastVideoIdRef.current !== currentVideo.id) return;
+    if (!currentVideo || loadedVideoIdentityRef.current !== playerVideoIdentity(currentVideo)) return;
     console.log("[INFO] Video ended, requesting next video");
     if (socket && playerKey) {
       socket.emit("player-play-next", {
@@ -452,6 +423,7 @@ const Room = () => {
           positionSec: positionSec || 0,
           durationSec: durationSec > 0 ? durationSec : null,
           videoId: currentVideo?.id || null,
+          queueId: currentVideo?.queueId || null,
         });
       } catch (err) {
         console.error("[ERR] Failed to get playback state:", err);
@@ -518,22 +490,6 @@ const Room = () => {
     } finally {
       setIsDeletingRoom(false);
     }
-  };
-
-  // YouTube player options
-  const opts = {
-    host: "https://www.youtube-nocookie.com",
-    height: "100%",
-    width: "100%",
-    playerVars: {
-      autoplay: 1,
-      modestbranding: 1,
-      rel: 0,
-      playsinline: 1,
-      mute: 0,
-      enablejsapi: 1,
-      fs: 0,
-    },
   };
 
   // If socket disconnects, try to keep playback going
@@ -689,7 +645,7 @@ const Room = () => {
             >
               <YouTube
                 videoId={currentVideo?.id || undefined}
-                opts={opts}
+                opts={PLAYER_OPTIONS}
                 onReady={onPlayerReady}
                 onEnd={onVideoEnd}
                 onError={(error) => {

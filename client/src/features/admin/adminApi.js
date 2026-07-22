@@ -41,6 +41,7 @@ export const adminApi = {
   history: ({ offset = 0, limit = 50 } = {}) => adminRequest(`/api/admin/history?offset=${offset}&limit=${limit}`),
   room: (roomId) => adminRequest(`/api/admin/rooms/${encodeURIComponent(roomId)}`),
   usage: () => adminRequest("/api/admin/usage?days=30"),
+  updateQuotaLimits: (limits) => adminRequest("/api/admin/usage/limits", { method: "PATCH", body: { limits } }),
   users: () => adminRequest("/api/admin/users"),
   audit: () => adminRequest("/api/admin/audit"),
   invite: (body) => adminRequest("/api/admin/invites", { method: "POST", body }),

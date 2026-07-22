@@ -96,7 +96,7 @@ const AdminDashboard = () => {
       </Stack>}
       {tab === 1 && <RoomTable rooms={active} total={activeTotal} page={activePage} pageSize={PAGE_SIZE} onPageChange={setActivePage} timeZone={timeZone} onOpen={openRoom} />}
       {tab === 2 && <RoomTable rooms={history} total={historyTotal} page={historyPage} pageSize={PAGE_SIZE} onPageChange={setHistoryPage} timeZone={timeZone} onOpen={openRoom} historical />}
-      {tab === 3 && <UsagePanel usage={usage} />}
+      {tab === 3 && <UsagePanel usage={usage} canEdit={["owner", "admin"].includes(user?.role)} onUsageChanged={setUsage} />}
       {tab === 4 && user?.role === "owner" && <AdministratorsPanel users={users} onRefresh={refreshUsers} />}
       {tab === 5 && user?.role === "owner" && <Stack spacing={1}>{audit.map((entry) => <Paper key={entry.id} sx={{ p: 2 }}>
         <Typography fontWeight={600}>{entry.action}</Typography><Typography variant="body2" color="text.secondary">{entry.actorEmail || "system"} · {formatDate(entry.occurredAt, timeZone)} · {entry.targetType || "—"} {entry.targetId || ""}</Typography>

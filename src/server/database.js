@@ -204,6 +204,16 @@ const MIGRATIONS = [
         sql: `ALTER TABLE policy_acceptances ADD COLUMN room_id TEXT REFERENCES rooms(id) ON DELETE CASCADE;
             CREATE INDEX policy_acceptances_room_idx ON policy_acceptances(room_id);`,
     },
+    {
+        version: 4,
+        name: 'youtube_quota_limit_overrides',
+        sql: `CREATE TABLE youtube_quota_limits (
+            quota_bucket TEXT PRIMARY KEY,
+            daily_limit INTEGER NOT NULL CHECK (daily_limit > 0),
+            updated_at INTEGER NOT NULL,
+            updated_by TEXT REFERENCES admin_users(id) ON DELETE SET NULL
+        );`,
+    },
 ];
 
 function json(value, fallback = null) {
@@ -585,6 +595,26 @@ class AppDatabase {
 
     youtubeUsageSince(since) {
         return this.db.prepare('SELECT * FROM youtube_api_usage WHERE attempted_at >= ? ORDER BY attempted_at DESC').all(since);
+    }
+
+    youtubeQuotaLimits() {
+        return Object.fromEntries(this.db.prepare('SELECT quota_bucket,daily_limit FROM youtube_quota_limits').all()
+            .map((row) => [row.quota_bucket, row.daily_limit]));
+    }
+
+    updateYoutubeQuotaLimits(updates, actorId, now = Date.now()) {
+        this.db.transaction(() => {
+            const upsert = this.db.prepare(`INSERT INTO youtube_quota_limits(quota_bucket,daily_limit,updated_at,updated_by)
+                VALUES (?,?,?,?) ON CONFLICT(quota_bucket) DO UPDATE SET
+                daily_limit=excluded.daily_limit,updated_at=excluded.updated_at,updated_by=excluded.updated_by`);
+            const remove = this.db.prepare('DELETE FROM youtube_quota_limits WHERE quota_bucket=?');
+            for (const [bucket, limit] of Object.entries(updates)) {
+                if (limit === null) remove.run(bucket);
+                else upsert.run(bucket, limit, now, actorId);
+            }
+            this.audit(actorId, 'youtube_quota_limits_updated', 'youtube_quota', null, { updates }, now);
+        })();
+        return this.youtubeQuotaLimits();
     }
 
     recordPolicyAcceptance({ adminUserId = null, anonymousIdHash = null, roomId = null, policyType, policyVersion, acceptedAt = Date.now() }) {

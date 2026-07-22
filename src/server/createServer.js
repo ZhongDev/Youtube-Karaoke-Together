@@ -202,6 +202,10 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
         res.json(youtubeService.usageSummary(numericQuery(req.query.days, 30, 30)));
     }));
 
+    app.patch('/api/admin/usage/limits', adminRoute({ role: 'admin', csrf: true }, async (req, res, admin) => {
+        res.json(youtubeService.updateQuotaLimits(req.body?.limits, admin.admin_user_id));
+    }));
+
     app.get('/api/admin/users', adminRoute({ role: 'owner' }, async (req, res) => {
         res.json({ users: db.listAdmins().map((user) => adminService.publicUser(user)) });
     }));

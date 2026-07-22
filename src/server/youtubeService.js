@@ -10,6 +10,11 @@ const QUOTA_CATALOG = Object.freeze({
     },
 });
 
+const QUOTA_BUCKET_DEFAULTS = Object.freeze(Object.values(QUOTA_CATALOG.methods).reduce((buckets, quota) => {
+    buckets[quota.bucket] = quota.defaultDailyLimit;
+    return buckets;
+}, {}));
+
 function pacificDate(timestamp) {
     const parts = new Intl.DateTimeFormat('en-CA', {
         timeZone: 'America/Los_Angeles',
@@ -143,9 +148,44 @@ class YouTubeService {
         return videos.map((video) => ({ ...video, sourcePlaylistId: playlistId }));
     }
 
+    quotaLimits() {
+        const overrides = this.db.youtubeQuotaLimits();
+        return Object.entries(QUOTA_BUCKET_DEFAULTS).map(([bucket, defaultDailyLimit]) => ({
+            bucket,
+            defaultDailyLimit,
+            effectiveDailyLimit: overrides[bucket] || defaultDailyLimit,
+            isCustom: overrides[bucket] !== undefined,
+        }));
+    }
+
+    updateQuotaLimits(input, actorId) {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+            throw new AppError('invalid_quota_limits', 'Quota limits must be an object');
+        }
+        const updates = {};
+        for (const [bucket, value] of Object.entries(input)) {
+            if (!Object.hasOwn(QUOTA_BUCKET_DEFAULTS, bucket)) {
+                throw new AppError('invalid_quota_bucket', `Unknown quota bucket: ${bucket}`);
+            }
+            if (value === null) {
+                updates[bucket] = null;
+                continue;
+            }
+            if (!Number.isSafeInteger(value) || value < 1 || value > 1_000_000_000) {
+                throw new AppError('invalid_quota_limit', `Quota limit for ${bucket} must be a whole number from 1 to 1,000,000,000`);
+            }
+            updates[bucket] = value;
+        }
+        if (Object.keys(updates).length === 0) throw new AppError('invalid_quota_limits', 'At least one quota limit is required');
+        this.db.updateYoutubeQuotaLimits(updates, actorId);
+        return this.usageSummary();
+    }
+
     usageSummary(days = 30) {
         const since = Date.now() - Math.min(Math.max(days, 1), 30) * 24 * 60 * 60 * 1000;
         const rows = this.db.youtubeUsageSince(since);
+        const quotaLimits = this.quotaLimits();
+        const limitsByBucket = Object.fromEntries(quotaLimits.map((limit) => [limit.bucket, limit]));
         const grouped = new Map();
         for (const row of rows) {
             const day = pacificDate(row.attempted_at);
@@ -158,6 +198,7 @@ class YouTubeService {
                 cost: 0,
                 failures: 0,
                 defaultDailyLimit: QUOTA_CATALOG.methods[row.method]?.defaultDailyLimit || null,
+                effectiveDailyLimit: limitsByBucket[row.quota_bucket]?.effectiveDailyLimit || null,
             };
             item.requests += 1;
             item.cost += row.quota_cost;
@@ -175,6 +216,7 @@ class YouTubeService {
                 cost: 0,
                 failures: 0,
                 defaultDailyLimit: row.defaultDailyLimit,
+                effectiveDailyLimit: row.effectiveDailyLimit,
             };
             item.requests += row.requests;
             item.cost += row.cost;
@@ -185,11 +227,16 @@ class YouTubeService {
             catalogVersion: QUOTA_CATALOG.version,
             resetTimezone: 'America/Los_Angeles',
             authoritativeSource: 'Google Cloud Console',
-            catalog: Object.entries(QUOTA_CATALOG.methods).map(([method, quota]) => ({ method, ...quota })),
+            quotaLimits,
+            catalog: Object.entries(QUOTA_CATALOG.methods).map(([method, quota]) => ({
+                method,
+                ...quota,
+                effectiveDailyLimit: limitsByBucket[quota.bucket].effectiveDailyLimit,
+            })),
             buckets: [...buckets.values()].sort((a, b) => b.day.localeCompare(a.day) || a.bucket.localeCompare(b.bucket)),
             rows: methodRows.sort((a, b) => b.day.localeCompare(a.day) || a.bucket.localeCompare(b.bucket) || a.method.localeCompare(b.method)),
         };
     }
 }
 
-module.exports = { QUOTA_CATALOG, YouTubeService, pacificDate };
+module.exports = { QUOTA_BUCKET_DEFAULTS, QUOTA_CATALOG, YouTubeService, pacificDate };

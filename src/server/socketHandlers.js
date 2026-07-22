@@ -167,7 +167,7 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
                 if (videos.length === 0) throw new AppError('video_unavailable', 'This video is unavailable or not public', 404);
             }
             const result = roomService.addVideos(room.id, controllerKey, videos);
-            io.to(room.id).emit('video-changed', room.currentVideo);
+            if (result.currentChanged) io.to(room.id).emit('video-changed', room.currentVideo);
             io.to(room.id).emit('queue-updated', room.queue);
             socket.emit('queue-add-result', { addedCount: result.addedCount, skippedCount: result.skippedCount });
             return { addedCount: result.addedCount, skippedCount: result.skippedCount };

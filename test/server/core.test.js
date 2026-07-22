@@ -177,18 +177,28 @@ test('queue mutations use stable IDs and duplicate advances are idempotent', () 
     const service = new RoomService({ db, config, logger: quietLogger() });
     const created = service.createRoom();
     const registration = service.registerController(created.room.id, created.registrationToken, 'Singer');
-    service.addVideos(created.room.id, registration.controllerKey, [
+    const initialAdd = service.addVideos(created.room.id, registration.controllerKey, [
         { id: 'abcdefghijk', title: 'One' },
         { id: 'lmnopqrstuv', title: 'Two' },
         { id: 'wxyzABCDEFG', title: 'Three' },
     ]);
+    const queuedBehindCurrent = service.addVideos(created.room.id, registration.controllerKey, [
+        { id: 'hijklmnopqr', title: 'Four' },
+    ]);
+    assert.equal(initialAdd.currentChanged, true);
+    assert.equal(queuedBehindCurrent.currentChanged, false);
     const expected = created.room.currentVideo.queueId;
+    assert.equal(created.room.playback.queueId, expected);
     const first = service.advance(created.room.id, registration.controllerKey, expected, 'controller');
     const afterFirst = created.room.currentVideo.queueId;
     const duplicate = service.advance(created.room.id, registration.controllerKey, expected, 'controller');
     assert.equal(first.advanced, true);
     assert.deepEqual(duplicate, { advanced: false, reason: 'stale', currentQueueId: afterFirst });
     assert.equal(created.room.currentVideo.queueId, afterFirst);
+    assert.equal(created.room.playback.queueId, afterFirst);
+    assert.throws(() => service.updatePlayback(created.room.id, created.playerKey, {
+        queueId: expected, videoId: created.room.currentVideo.id, state: 'playing', positionSec: 10,
+    }), /stale queue item/);
 
     const removeId = created.room.queue[0].queueId;
     service.removeFromQueue(created.room.id, registration.controllerKey, removeId);
@@ -346,6 +356,38 @@ test('admin HTTP session uses secure cookies, CSRF, RBAC, and read-only room API
         body: JSON.stringify({ email: 'viewer@example.com', role: 'viewer' }),
     });
     assert.equal(invited.status, 201);
+
+    const operator = instance.db.createAdminWithIdentity({
+        id: 'quota-admin', email: 'quota-admin@example.com', displayName: 'Quota Admin', role: 'admin',
+        provider: 'google', subject: 'quota-admin-subject',
+    });
+    const operatorSession = instance.adminService.createSession(operator.id);
+    const quotaUpdate = await fetch(`${base}/api/admin/usage/limits`, {
+        method: 'PATCH', headers: {
+            cookie: `ytkt_admin_session=${encodeURIComponent(operatorSession.token)}`,
+            'x-csrf-token': operatorSession.csrfToken,
+            'content-type': 'application/json',
+        },
+        body: JSON.stringify({ limits: { search_calls: 500, general_units: 25000 } }),
+    });
+    assert.equal(quotaUpdate.status, 200);
+    const updatedUsage = await quotaUpdate.json();
+    assert.equal(updatedUsage.quotaLimits.find((entry) => entry.bucket === 'search_calls').effectiveDailyLimit, 500);
+    assert.equal(updatedUsage.quotaLimits.find((entry) => entry.bucket === 'general_units').isCustom, true);
+    assert.equal(instance.db.youtubeQuotaLimits().general_units, 25000);
+});
+
+test('YouTube quota limit overrides survive a database restart', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ytkt-quota-'));
+    const filename = path.join(directory, 'quota.sqlite');
+    const db = new AppDatabase(filename, { logger: quietLogger() });
+    db.updateYoutubeQuotaLimits({ search_calls: 1200, general_units: 40000 }, null);
+    db.close();
+
+    const reopened = new AppDatabase(filename, { logger: quietLogger() });
+    assert.deepEqual(reopened.youtubeQuotaLimits(), { general_units: 40000, search_calls: 1200 });
+    reopened.close();
+    fs.rmSync(directory, { recursive: true, force: true });
 });
 
 test('YouTube usage records separate quota buckets and count failed requests', async () => {
@@ -369,7 +411,13 @@ test('YouTube usage records separate quota buckets and count failed requests', a
     assert.equal(summary.rows.find((row) => row.method === 'videos.list').failures, 1);
     assert.equal(summary.buckets.find((row) => row.bucket === 'search_calls').defaultDailyLimit, 100);
     assert.deepEqual(summary.catalog.find((row) => row.method === 'videos.insert'), {
-        method: 'videos.insert', bucket: 'video_upload_calls', cost: 1, defaultDailyLimit: 100, usedByApplication: false,
+        method: 'videos.insert', bucket: 'video_upload_calls', cost: 1, defaultDailyLimit: 100,
+        effectiveDailyLimit: 100, usedByApplication: false,
     });
+    instance.youtubeService.updateQuotaLimits({ search_calls: 750 }, null);
+    const customized = instance.youtubeService.usageSummary();
+    assert.equal(customized.buckets.find((row) => row.bucket === 'search_calls').effectiveDailyLimit, 750);
+    assert.equal(customized.quotaLimits.find((row) => row.bucket === 'search_calls').isCustom, true);
+    assert.throws(() => instance.youtubeService.updateQuotaLimits({ unknown_bucket: 10 }, null), /Unknown quota bucket/);
     instance.db.close();
 });
