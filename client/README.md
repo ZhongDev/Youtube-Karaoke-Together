@@ -34,13 +34,15 @@ npm run test:run  # one complete client test run
 
 - `App.jsx`: theme, error boundary, lazy route composition
 - `components/`: public room/controller composition and legal/contact pages
-- `features/controller/`: YouTube search, playback controls, registration dialog, and route navigation
+- `features/controller/`: YouTube search, playback controls, registration dialog, route navigation, and queue-ordering helpers
 - `features/admin/`: Google login, protected dashboard, room/history/quota/admin panels
 - `features/consent/`: versioned Terms/privacy local-storage migration
 - `hooks/useSocket.js`: shared connection plus precisely scoped request/listener helpers
 - `config.js`: runtime connection and storage-key helpers
 
 The room, controller, legal, and admin routes are lazy loaded. `Control.jsx` is a route-level composer rather than the former all-in-one controller. Search pagination ignores stale responses, and the search panel stays mounted so its query and results survive controller tab changes. Controller mutations use request-correlated Socket.IO acknowledgements. Room playback identity is based on stable queue-item IDs, preventing controller metadata and queue updates from restarting the active video while still allowing the same YouTube video to be queued consecutively.
+
+Search results provide adjacent confirmed “add to top” and standard add actions. The Queue tab uses `@dnd-kit` mouse, touch, and keyboard sensors on a left-side handle, applies an optimistic local reorder, and restores authoritative room state if the server rejects a stale order. Normal mode reorders all pending items. Round-robin mode exposes handles only for the authenticated controller’s items and sends only that personal order, leaving inter-controller turn fairness to the server.
 
 The API Usage dashboard shows Google&apos;s catalog defaults alongside persisted local limits. `admin` and `owner` roles can edit or restore those limits; `viewer` access remains read-only. Local limits change dashboard comparisons only and do not alter Google&apos;s enforced quota.
 

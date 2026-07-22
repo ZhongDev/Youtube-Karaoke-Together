@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Added a confirmed “add to top” action beside the standard controller search-result add button
+- Added accessible mouse, touch, and keyboard queue reordering from left-side handles on the controller Queue tab
+- Added server-side queue-order validation, persistence, auditing, and realtime synchronization with optimistic client updates and stale-order recovery
+- Added focused service and client tests for priority insertion, shared and round-robin reorder scopes, restart persistence, and confirmation behavior
+
+### Changed
+
+- In round-robin mode, priority additions now lead only the requesting controller’s personal order, and reordering is restricted to that same personal order before fair turn interleaving is rebuilt
+- Derived server startup and health versions from the root package metadata and bumped the root/client packages to 3.1.0
+
+### Documentation
+
+- Updated the root and client READMEs with priority-add, drag/keyboard reorder, and round-robin behavior
+
 ## [3.0.0] - 2026-07-21 - Durable Rooms and Administration
 
 ### Added

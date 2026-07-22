@@ -1,4 +1,19 @@
 import React, { useState, useEffect } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Box,
@@ -23,10 +38,12 @@ import {
   QueueMusic as QueueMusicIcon,
   Lyrics as LyricsIcon,
   OpenInNew as OpenInNewIcon,
+  DragIndicator as DragIndicatorIcon,
 } from "@mui/icons-material";
 import { useParams } from "react-router-dom";
 import useSocket from "../hooks/useSocket";
 import { decodeHtmlEntities } from "../config";
+import { reorderQueueForDrag } from "../features/controller/queueOrdering";
 
 // Matches any Hiragana, Katakana (full + half width), or CJK Unified Ideograph.
 // Kanji are shared with Chinese, but for karaoke-title detection this is
@@ -58,6 +75,7 @@ const VideoCard = React.memo(function VideoCard({
   queueColorsEnabled = true,
   isConnected,
   controllerKey,
+  leadingAction = null,
 }) {
   const hue = video.colorHue;
   const hasColor = queueColorsEnabled && !isNowPlaying && hue != null;
@@ -91,6 +109,7 @@ const VideoCard = React.memo(function VideoCard({
         },
       }}
     >
+      {leadingAction}
       {/* Thumbnail */}
       <Box
         component="img"
@@ -168,7 +187,69 @@ const VideoCard = React.memo(function VideoCard({
   );
 });
 
-const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled = false }) => {
+const QueueItemTransition = ({ children }) => (
+  <motion.div
+    layout
+    initial={{ opacity: 0, y: 30 }}
+    animate={{ opacity: 1, y: 0 }}
+    exit={{ opacity: 0, y: -30 }}
+    transition={{
+      layout: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+      opacity: { duration: 0.15, ease: "easeOut" },
+      y: { duration: 0.15, ease: [0.0, 0, 0.2, 1] },
+    }}
+  >
+    {children}
+  </motion.div>
+);
+
+const SortableQueueItem = ({ video, disabled, children }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: String(video.queueId), disabled });
+  const displayTitle = decodeHtmlEntities(video.title);
+  const handle = (
+    <IconButton
+      ref={setActivatorNodeRef}
+      {...attributes}
+      {...listeners}
+      aria-label={`Reorder ${displayTitle}`}
+      disabled={disabled}
+      size="small"
+      sx={{
+        flexShrink: 0,
+        touchAction: "none",
+        cursor: disabled ? "default" : "grab",
+        color: disabled ? "text.disabled" : "text.secondary",
+        "&:active": { cursor: "grabbing" },
+      }}
+    >
+      <DragIndicatorIcon />
+    </IconButton>
+  );
+  return (
+    <Box
+      ref={setNodeRef}
+      style={{
+        transform: transform ? `translate3d(0, ${Math.round(transform.y)}px, 0)` : undefined,
+        transition,
+        position: "relative",
+        zIndex: isDragging ? 2 : undefined,
+        opacity: isDragging ? 0.85 : 1,
+      }}
+    >
+      <QueueItemTransition>{children(handle)}</QueueItemTransition>
+    </Box>
+  );
+};
+
+const Queue = ({ controllerKey, controllerId, queueColorsEnabled = true, lyricsRomajiEnabled = false }) => {
   const { roomId } = useParams();
   const [queue, setQueue] = useState([]);
   const [currentVideo, setCurrentVideo] = useState(null);
@@ -179,6 +260,7 @@ const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled =
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [videoToDelete, setVideoToDelete] = useState(null);
   const [skipDialogOpen, setSkipDialogOpen] = useState(false);
+  const [isReordering, setIsReordering] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [notification, setNotification] = useState({
     open: false,
@@ -194,6 +276,12 @@ const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled =
     serverError,
     clearServerError,
   } = useSocket();
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   // Handle socket connection and listen for room updates
   useEffect(() => {
@@ -326,6 +414,35 @@ const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled =
     setSkipDialogOpen(false);
   };
 
+  const handleDragEnd = ({ active, over }) => {
+    if (!over || !socket || !controllerKey || !isConnected) return;
+    const reordered = reorderQueueForDrag(
+      queue,
+      active.id,
+      over.id,
+      Boolean(settingsState.roundRobinEnabled),
+      controllerId
+    );
+    if (!reordered) return;
+    setQueue(reordered.queue);
+    setIsReordering(true);
+    socket.timeout(10_000).emit("reorder-queue", {
+      roomId,
+      controllerKey,
+      orderedQueueIds: reordered.orderedQueueIds,
+    }, (error, response) => {
+      setIsReordering(false);
+      if (error || !response?.ok) {
+        setNotification({
+          open: true,
+          message: response?.error?.message || "Reordering the queue timed out.",
+          severity: "error",
+        });
+        socket.emit("request-room-state", { roomId });
+      }
+    });
+  };
+
   const formatTime = (sec) => {
     if (sec == null || Number.isNaN(sec)) return "--:--";
     const s = Math.floor(sec % 60)
@@ -336,6 +453,14 @@ const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled =
       .padStart(2, "0");
     return `${m}:${s}`;
   };
+
+  const roundRobinEnabled = Boolean(settingsState.roundRobinEnabled);
+  const sortableQueue = roundRobinEnabled
+    ? queue.filter((video) => video.controllerId === controllerId)
+    : queue;
+  const sortableIds = sortableQueue.map((video) => String(video.queueId));
+  const sortableIdSet = new Set(sortableIds);
+  const reorderDisabled = !isConnected || !controllerKey || isReordering || sortableIds.length < 2;
 
   return (
     <Box sx={{ p: 2, maxWidth: 600, mx: "auto" }}>
@@ -558,58 +683,68 @@ const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled =
               )}
             </Box>
 
-            {/* Queue List */}
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-              <AnimatePresence initial={false}>
-              {queue.map((video, index) => (
-                <motion.div
-                  key={video.queueId || `${video.id}-${index}`}
-                  layout
-                  initial={{ opacity: 0, y: 30 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -30 }}
-                  transition={{
-                    layout: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
-                    opacity: { duration: 0.15, ease: "easeOut" },
-                    y: { duration: 0.15, ease: [0.0, 0, 0.2, 1] },
-                  }}
-                >
-                  <VideoCard
-                    video={video}
-                    onAction={() => handleDeleteClick(video, index)}
-                    actionIcon={<DeleteIcon fontSize="small" />}
-                    actionColor="#EF4444"
-                    actionBgColor="rgba(239, 68, 68, 0.1)"
-                    queueColorsEnabled={queueColorsEnabled}
-                    isConnected={isConnected}
-                    controllerKey={controllerKey}
-                  />
-                </motion.div>
-              ))}
-              </AnimatePresence>
+            {queue.length > 1 && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.5 }}>
+                {roundRobinEnabled
+                  ? sortableIds.length > 1
+                    ? "Drag your handles to change your personal order; round-robin turns stay fair."
+                    : "Only videos you added can be reordered in round-robin mode."
+                  : "Drag a handle to change the pending queue order."}
+              </Typography>
+            )}
 
-              {/* Empty State */}
-              {queue.length === 0 && (
-                <Box
-                  sx={{
-                    py: 5,
-                    px: 3,
-                    textAlign: "center",
-                    background: "rgba(148, 163, 184, 0.03)",
-                    borderRadius: 2,
-                    border: "1px dashed rgba(148, 163, 184, 0.15)",
-                  }}
-                >
-                  <QueueMusicIcon sx={{ fontSize: 40, color: "rgba(148, 163, 184, 0.3)", mb: 1.5 }} />
-                  <Typography variant="body2" sx={{ color: "text.secondary", fontWeight: 500 }}>
-                    No videos in queue
-                  </Typography>
-                  <Typography variant="caption" sx={{ color: "text.secondary", opacity: 0.7 }}>
-                    Add videos from the search tab
-                  </Typography>
+            {/* Queue List */}
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <AnimatePresence initial={false}>
+                    {queue.map((video, index) => {
+                      const card = (leadingAction) => <VideoCard
+                        video={video}
+                        onAction={() => handleDeleteClick(video, index)}
+                        actionIcon={<DeleteIcon fontSize="small" />}
+                        actionColor="#EF4444"
+                        actionBgColor="rgba(239, 68, 68, 0.1)"
+                        queueColorsEnabled={queueColorsEnabled}
+                        isConnected={isConnected}
+                        controllerKey={controllerKey}
+                        leadingAction={leadingAction}
+                      />;
+                      if (sortableIdSet.has(String(video.queueId))) {
+                        return <SortableQueueItem key={video.queueId} video={video} disabled={reorderDisabled}>
+                          {card}
+                        </SortableQueueItem>;
+                      }
+                      return <QueueItemTransition key={video.queueId || `${video.id}-${index}`}>
+                        {card(<Box aria-hidden sx={{ width: 34, flexShrink: 0 }} />)}
+                      </QueueItemTransition>;
+                    })}
+                  </AnimatePresence>
+
+                  {/* Empty State */}
+                  {queue.length === 0 && (
+                    <Box
+                      sx={{
+                        py: 5,
+                        px: 3,
+                        textAlign: "center",
+                        background: "rgba(148, 163, 184, 0.03)",
+                        borderRadius: 2,
+                        border: "1px dashed rgba(148, 163, 184, 0.15)",
+                      }}
+                    >
+                      <QueueMusicIcon sx={{ fontSize: 40, color: "rgba(148, 163, 184, 0.3)", mb: 1.5 }} />
+                      <Typography variant="body2" sx={{ color: "text.secondary", fontWeight: 500 }}>
+                        No videos in queue
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: "text.secondary", opacity: 0.7 }}>
+                        Add videos from the search tab
+                      </Typography>
+                    </Box>
+                  )}
                 </Box>
-              )}
-            </Box>
+              </SortableContext>
+            </DndContext>
           </Box>
         )}
       </Paper>

@@ -6,6 +6,7 @@ YouTube Karaoke Together is a collaborative YouTube queue with a shared room/pla
 
 - Shared YouTube player with realtime queue and playback state
 - QR-based mobile controllers with optional round-robin ordering
+- Confirmed “add to top” actions from controller search and drag/keyboard reordering on the controller queue page
 - Server-validated video and playlist additions (up to 50 playable playlist entries per add)
 - Unfiltered YouTube search (`safeSearch=none`); YouTube availability, age, region, and embed restrictions still apply
 - Stable queue-item IDs and duplicate-safe skip/auto-advance
@@ -155,6 +156,8 @@ client/src/
 ```
 
 The large room and controller routes are lazy loaded. `Control.jsx` now delegates search, queue, controls, settings, consent, and realtime helpers to feature-owned modules instead of owning the whole UI and network flow.
+
+Pending queue items can be reordered from the controller Queue tab by dragging the left handle or using its keyboard controls. With round-robin disabled, a controller may reorder the shared pending queue. With round-robin enabled, each controller can reorder only videos it added; the server then rebuilds the interleaving without changing the fair turn sequence. Likewise, “add to top” places a confirmed search result at the top of the shared pending queue normally, or at the top of that controller’s personal order in round-robin mode. Neither operation changes or restarts the current video.
 
 ## Security and privacy notes
 

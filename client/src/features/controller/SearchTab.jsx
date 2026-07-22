@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Add, PlaylistAdd } from "@mui/icons-material";
-import { Box, Button, Chip, CircularProgress, IconButton, Paper, TextField, Typography } from "@mui/material";
+import { Add, PlaylistAdd, VerticalAlignTop } from "@mui/icons-material";
+import { Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, Paper, TextField, Typography } from "@mui/material";
 import { decodeHtmlEntities, getBackendUrl } from "../../config";
 
 function transformResult(item) {
@@ -13,13 +13,14 @@ function transformResult(item) {
   };
 }
 
-const SearchTab = ({ roomId, controllerKey, socket, isConnected, notify }) => {
+const SearchTab = ({ roomId, controllerKey, socket, isConnected, notify, roundRobinEnabled = false }) => {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextPageToken, setNextPageToken] = useState(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [priorityVideo, setPriorityVideo] = useState(null);
   const observer = useRef(null);
   const requestSequence = useRef(0);
   const loadingRef = useRef(false);
@@ -70,14 +71,19 @@ const SearchTab = ({ roomId, controllerKey, socket, isConnected, notify }) => {
 
   useEffect(() => () => observer.current?.disconnect(), []);
 
-  const add = (video) => {
+  const add = (video, addToTop = false) => {
     if (!controllerKey || !socket || !isConnected) return notify("Not connected or authenticated.", "error");
-    socket.timeout(30_000).emit("add-to-queue", { roomId, video, controllerKey }, (timeoutError, response) => {
+    socket.timeout(30_000).emit("add-to-queue", { roomId, video, controllerKey, addToTop }, (timeoutError, response) => {
       if (timeoutError) return notify("Adding the selection timed out.", "error");
       if (!response?.ok) return notify(response?.error?.message || "Could not add the selection.", "error");
       const suffix = response.skippedCount ? ` (${response.skippedCount} skipped)` : "";
-      notify(`${response.addedCount} video${response.addedCount === 1 ? "" : "s"} added${suffix}.`, "success");
+      notify(`${response.addedCount} video${response.addedCount === 1 ? "" : "s"} added${addToTop ? " to the top" : ""}${suffix}.`, "success");
     });
+  };
+
+  const confirmPriorityAdd = () => {
+    if (priorityVideo) add(priorityVideo, true);
+    setPriorityVideo(null);
   };
 
   return <Box sx={{ maxWidth: 600, mx: "auto", width: "100%", p: 2 }}>
@@ -90,11 +96,27 @@ const SearchTab = ({ roomId, controllerKey, socket, isConnected, notify }) => {
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>{results.map((result, index) => <Box key={result.id} ref={index === results.length - 1 ? lastResultRef : null} sx={{ display: "flex", alignItems: "center", gap: 2, p: 1.5, borderRadius: 2, background: "rgba(139,92,246,.05)" }}>
         <Box component="img" src={result.thumbnailUrl || (result.isPlaylist ? undefined : `https://img.youtube.com/vi/${result.id}/mqdefault.jpg`)} alt="" sx={{ width: 80, height: 45, borderRadius: 1, objectFit: "cover", background: "#222" }} />
         <Box sx={{ flex: 1, minWidth: 0 }}><Typography variant="body2" noWrap>{result.title}</Typography><Typography variant="caption" color="text.secondary">{result.channelTitle}</Typography>{result.isPlaylist && <Chip size="small" icon={<PlaylistAdd />} label="Playlist" sx={{ ml: 1, height: 20 }} />}</Box>
+        <IconButton aria-label={`Add ${result.title} to top of queue`} onClick={() => setPriorityVideo(result)} disabled={!isConnected || !controllerKey} color="warning"><VerticalAlignTop /></IconButton>
         <IconButton aria-label={`Add ${result.title}`} onClick={() => add(result)} disabled={!isConnected || !controllerKey} color="success"><Add /></IconButton>
       </Box>)}</Box>
       {loadingMore && <Box sx={{ textAlign: "center", py: 2 }}><CircularProgress size={24} /></Box>}
       {hasSearched && !searching && results.length === 0 && <Typography color="text.secondary" align="center" sx={{ py: 4 }}>No results found.</Typography>}
     </Paper>
+    <Dialog open={Boolean(priorityVideo)} onClose={() => setPriorityVideo(null)} fullWidth maxWidth="xs">
+      <DialogTitle>Add to top of queue?</DialogTitle>
+      <DialogContent>
+        <Typography variant="body2">
+          Add “{priorityVideo?.title}” to the top of {roundRobinEnabled ? "your personal queue order" : "the pending queue"}?
+        </Typography>
+        {roundRobinEnabled && <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+          Round-robin turn order will remain unchanged.
+        </Typography>}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setPriorityVideo(null)}>Cancel</Button>
+        <Button variant="contained" color="warning" onClick={confirmPriorityAdd}>Add to top</Button>
+      </DialogActions>
+    </Dialog>
   </Box>;
 };
 
