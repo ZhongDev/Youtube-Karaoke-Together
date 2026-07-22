@@ -2,9 +2,13 @@
   "maxRooms": 5000,
   "maxControllersPerRoom": 500,
   "maxQueueLengthPerRoom": 1000,
+  "maxPlaylistItemsPerAdd": 50,
   "maxUsernameLength": 50,
   "maxVideoTitleLength": 200,
-  "maxVideoIdLength": 64,
+  "maxVideoIdLength": 128,
   "maxSearchQueryLength": 200,
-  "maxHttpBufferSize": 65536
+  "maxHttpBufferSize": 65536,
+  "maxSocketEventsPerMinute": 240,
+  "maxPlaylistAddsPerMinute": 5,
+  "maxVideoAddsPerMinute": 30
 }

@@ -130,3 +130,9 @@ dist
 .pnp.*
 
 .DS_Store
+
+# Runtime SQLite data and local backups
+data/
+backups/
+*.sqlite-wal
+*.sqlite-shm

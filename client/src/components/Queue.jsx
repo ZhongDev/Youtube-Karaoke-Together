@@ -261,17 +261,23 @@ const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled =
     }
   }, [serverError, clearServerError]);
 
-  const handleDeleteClick = (video, index) => {
-    setVideoToDelete({ video, index });
+  const handleDeleteClick = (video) => {
+    setVideoToDelete({ video });
     setDeleteDialogOpen(true);
   };
 
   const handleDeleteConfirm = () => {
-    if (videoToDelete && controllerKey) {
-      socket.emit("remove-from-queue", {
+    if (videoToDelete && controllerKey && socket) {
+      socket.timeout(10_000).emit("remove-from-queue", {
         roomId,
-        index: videoToDelete.index,
+        queueId: videoToDelete.video.queueId,
         controllerKey,
+      }, (error, response) => {
+        if (error || !response?.ok) setNotification({
+          open: true,
+          message: response?.error?.message || "Removing the queue item timed out.",
+          severity: "error",
+        });
       });
       setDeleteDialogOpen(false);
       setVideoToDelete(null);
@@ -294,8 +300,18 @@ const Queue = ({ controllerKey, queueColorsEnabled = true, lyricsRomajiEnabled =
   };
 
   const handleSkipConfirm = () => {
-    if (controllerKey) {
-      socket.emit("play-next", { roomId, controllerKey });
+    if (controllerKey && socket) {
+      socket.timeout(10_000).emit("play-next", {
+        roomId,
+        controllerKey,
+        expectedQueueId: currentVideo?.queueId,
+      }, (error, response) => {
+        if (error || !response?.ok) setNotification({
+          open: true,
+          message: response?.error?.message || "Skip request timed out.",
+          severity: "error",
+        });
+      });
       setSkipDialogOpen(false);
     } else {
       setNotification({

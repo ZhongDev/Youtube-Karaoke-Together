@@ -1,48 +1,47 @@
-# YouTube Karaoke Together - Client
+# YouTube Karaoke Together client
 
-React frontend for YouTube Karaoke Together.
+React 19/Vite 7 frontend for the shared room, mobile controller, legal pages, and authenticated administrator dashboard.
 
 ## Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Create environment file for development
 cp .env.example .env
-
-# Start development server
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+The Vite server uses port 3000. Development variables:
 
-## Production Build
+| Variable | Purpose | Default |
+|---|---|---|
+| `VITE_DEV` | Use an explicit development backend | `false` |
+| `VITE_BACKEND_URL` | Development API/Socket.IO origin | `http://localhost:8080` when development mode is enabled |
+| `VITE_GOOGLE_CLIENT_ID` | Google Identity Services web client ID for `/admin` | none |
+
+Production API and Socket.IO connections use `window.location.origin`; Socket.IO uses `/ws/`. `VITE_GOOGLE_CLIENT_ID` is still required at build time when administrator sign-in is enabled.
+
+## Scripts
 
 ```bash
-npm run build
+npm run dev       # Vite development server
+npm run build     # production bundle in dist/
+npm run preview   # preview the production bundle
+npm test          # Vitest watch mode
+npm run test:run  # one complete client test run
 ```
 
-Builds the app for production to the `dist` folder. The build is minified and optimized for best performance.
+## Structure
 
-**Note**: In production, the client automatically uses `window.location.origin` for API calls and `/ws/` for Socket.IO connections. No environment variables are needed.
+- `App.jsx`: theme, error boundary, lazy route composition
+- `components/`: public room/controller composition and legal/contact pages
+- `features/controller/`: YouTube search, playback controls, registration dialog, and route navigation
+- `features/admin/`: Google login, protected dashboard, room/history/quota/admin panels
+- `features/consent/`: versioned Terms/privacy local-storage migration
+- `hooks/useSocket.js`: shared connection plus precisely scoped request/listener helpers
+- `config.js`: runtime connection and storage-key helpers
 
-## Available Scripts
+The room, controller, legal, and admin routes are lazy loaded. `Control.jsx` is a route-level composer rather than the former all-in-one controller. Search pagination ignores stale responses, and the search panel stays mounted so its query and results survive controller tab changes. Controller mutations use request-correlated Socket.IO acknowledgements. Room playback identity is based on stable queue-item IDs, preventing controller metadata and queue updates from restarting the active video while still allowing the same YouTube video to be queued consecutively.
 
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build locally
-- `npm test` - Run tests
+The API Usage dashboard shows Google&apos;s catalog defaults alongside persisted local limits. `admin` and `owner` roles can edit or restore those limits; `viewer` access remains read-only. Local limits change dashboard comparisons only and do not alter Google&apos;s enforced quota.
 
-## Environment Variables
-
-Only needed for development:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `VITE_DEV` | Enable development mode | `false` |
-| `VITE_BACKEND_URL` | Backend server URL | Uses same origin |
-
-## Learn More
-
-See the main [README.md](../README.md) for full documentation.
+See the [main README](../README.md) for server configuration, administrator onboarding, persistence, deployment, and privacy/retention behavior.

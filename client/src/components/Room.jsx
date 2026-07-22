@@ -17,9 +17,10 @@ import {
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
+  TextField,
 } from "@mui/material";
 import YouTube from "react-youtube";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import SettingsIcon from "@mui/icons-material/Settings";
 import SignalWifiOffIcon from "@mui/icons-material/SignalWifiOff";
 import QueueMusicIcon from "@mui/icons-material/QueueMusic";
@@ -30,13 +31,30 @@ import BlockIcon from "@mui/icons-material/Block";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import Tooltip from "@mui/material/Tooltip";
 import useSocket from "../hooks/useSocket";
-import { getBackendUrl, getStoredPlayerKey, storePlayerKey, STORAGE_KEYS, decodeHtmlEntities } from "../config";
+import { getBackendUrl, getStoredPlayerKey, removePlayerKey, storePlayerKey, STORAGE_KEYS, decodeHtmlEntities } from "../config";
+import { playerResumeSeconds, playerVideoIdentity, shouldLoadPlayerVideo } from "../features/room/playerIdentity";
+
+const PLAYER_OPTIONS = {
+  host: "https://www.youtube-nocookie.com",
+  height: "100%",
+  width: "100%",
+  playerVars: {
+    autoplay: 1,
+    modestbranding: 1,
+    rel: 0,
+    playsinline: 1,
+    mute: 0,
+    enablejsapi: 1,
+    fs: 0,
+  },
+};
 
 const Room = () => {
   const { roomId } = useParams();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const playerRef = useRef(null);
-  const lastVideoIdRef = useRef(null);
+  const loadedVideoIdentityRef = useRef(null);
   const roomContainerRef = useRef(null);
 
   // Get playerKey from URL or localStorage
@@ -48,14 +66,14 @@ const Room = () => {
   useEffect(() => {
     if (urlPlayerKey && roomId) {
       storePlayerKey(roomId, urlPlayerKey);
+      navigate(`/room/${roomId}`, { replace: true });
     }
-  }, [urlPlayerKey, roomId]);
+  }, [urlPlayerKey, roomId, navigate]);
 
   const [qrCode, setQrCode] = useState(null);
   const [controlUrl, setControlUrl] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [currentVideo, setCurrentVideo] = useState(null);
-  const [initalStartSeconds, setInitalStartSeconds] = useState(null);
   const [queue, setQueue] = useState([]);
   const [playback, setPlayback] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -65,12 +83,16 @@ const Room = () => {
     severity: "info",
   });
   const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const [playerError, setPlayerError] = useState(null);
   const [settingsState, setSettingsState] = useState({
     roundRobinEnabled: false,
   });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controllers, setControllers] = useState([]);
   const [allowNewControllers, setAllowNewControllers] = useState(true);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [isDeletingRoom, setIsDeletingRoom] = useState(false);
+  const [roomClosedReason, setRoomClosedReason] = useState(null);
   const [roomQueueColorsEnabled, setRoomQueueColorsEnabled] = useState(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.ROOM_QUEUE_COLORS_ENABLED);
     return stored === null ? true : stored === "true";
@@ -84,23 +106,12 @@ const Room = () => {
     serverError,
     clearServerError,
     joinRoomAdmin,
+    leaveRoom,
   } = useSocket();
 
   // Compute resume position based on playback snapshot
   const computeStartSeconds = useCallback(
-    (videoId) => {
-      if (!playback) return 0;
-      if (playback.videoId && playback.videoId !== videoId) return 0;
-      const pos =
-        typeof playback.positionSec === "number" ? playback.positionSec : 0;
-      const dur =
-        typeof playback.durationSec === "number" ? playback.durationSec : null;
-      const clamped =
-        dur != null
-          ? Math.min(Math.max(0, pos), Math.max(0, dur - 0.75))
-          : Math.max(0, pos);
-      return clamped;
-    },
+    (video) => playerResumeSeconds(playback, video),
     [playback]
   );
 
@@ -199,11 +210,12 @@ const Room = () => {
     window.open(controlUrl, "_blank", "noopener,noreferrer");
   }, [controlUrl]);
 
-  // Fetch QR code on mount and when playerKey becomes available
+  // Fetch immediately and refresh before the default 30-minute invite expires.
   useEffect(() => {
-    if (roomId && playerKey) {
-      fetchQRCode();
-    }
+    if (!roomId || !playerKey) return undefined;
+    fetchQRCode();
+    const refreshTimer = window.setInterval(fetchQRCode, 25 * 60 * 1000);
+    return () => window.clearInterval(refreshTimer);
   }, [roomId, playerKey, fetchQRCode]);
 
   // Handle socket connection and room joining as admin
@@ -255,6 +267,7 @@ const Room = () => {
 
     const handleVideoChanged = (video) => {
       console.log("[INFO] Video changed:", video);
+      if (!video || shouldLoadPlayerVideo(loadedVideoIdentityRef.current, video)) setPlayerError(null);
       setCurrentVideo(video);
 
       if (video === null) {
@@ -262,30 +275,11 @@ const Room = () => {
           playerRef.current.pauseVideo();
           playerRef.current.clearVideo();
         }
-        lastVideoIdRef.current = null;
+        loadedVideoIdentityRef.current = null;
         return;
       }
-
-      const incomingId = video?.id;
-      if (incomingId && lastVideoIdRef.current === incomingId) {
-        // Same video ID re-queued; force a restart
-        if (playerRef.current) {
-          try {
-            playerRef.current.loadVideoById({ videoId: incomingId, startSeconds: 0 });
-            playerRef.current.playVideo();
-          } catch (err) {
-            try {
-              playerRef.current.seekTo(0, true);
-              playerRef.current.playVideo();
-            } catch (_) {}
-          }
-        } else {
-          // Ensure it reloads when player becomes ready
-          lastVideoIdRef.current = null;
-        }
-        return;
-      }
-      // Note: actual video loading is handled by the separate useEffect that watches currentVideo
+      // Metadata-only updates retain the same queue identity. The loading effect below
+      // is responsible for changing playback only when that identity changes.
     };
 
     const handleQueueUpdated = (newQueue) => {
@@ -301,29 +295,41 @@ const Room = () => {
     const handleRegistrationStatus = ({ allowNewControllers: allow }) => {
       setAllowNewControllers(allow);
     };
+    const handlePlaybackUpdated = (pb) => setPlayback(pb);
+    const handleSettingsUpdated = (settings) =>
+      setSettingsState(settings || { roundRobinEnabled: false });
+    const handleRoomClosed = ({ reason } = {}) => {
+      removePlayerKey(roomId);
+      setCurrentVideo(null);
+      setQueue([]);
+      setRoomClosedReason(reason || "inactive");
+      setNotification({ open: true, message: "This room closed after inactivity.", severity: "warning" });
+    };
 
     socket.on("room-state-admin", handleRoomStateAdmin);
     socket.on("room-state", handleRoomState);
     socket.on("video-changed", handleVideoChanged);
     socket.on("queue-updated", handleQueueUpdated);
-    socket.on("playback-updated", (pb) => setPlayback(pb));
-    socket.on("settings-updated", (settings) =>
-      setSettingsState(settings || { roundRobinEnabled: false })
-    );
+    socket.on("playback-updated", handlePlaybackUpdated);
+    socket.on("settings-updated", handleSettingsUpdated);
     socket.on("controllers-updated", handleControllersUpdated);
     socket.on("registration-status", handleRegistrationStatus);
+    socket.on("room-closed", handleRoomClosed);
 
     return () => {
       socket.off("room-state-admin", handleRoomStateAdmin);
       socket.off("room-state", handleRoomState);
       socket.off("video-changed", handleVideoChanged);
       socket.off("queue-updated", handleQueueUpdated);
-      socket.off("playback-updated");
-      socket.off("settings-updated");
+      socket.off("playback-updated", handlePlaybackUpdated);
+      socket.off("settings-updated", handleSettingsUpdated);
       socket.off("controllers-updated", handleControllersUpdated);
       socket.off("registration-status", handleRegistrationStatus);
+      socket.off("room-closed", handleRoomClosed);
     };
   }, [roomId, socket, isConnected, joinRoomAdmin, playerKey]);
+
+  useEffect(() => () => leaveRoom(roomId), [leaveRoom, roomId]);
 
   // Show server error notifications
   useEffect(() => {
@@ -343,32 +349,20 @@ const Room = () => {
     setIsPlayerReady(true);
     try {
       const incomingId = currentVideo?.id;
-      const startSeconds = computeStartSeconds(incomingId);
-      if (incomingId) {
-        const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
-        if (!alreadyLoadedSameVideo) {
-          playerRef.current.loadVideoById({
-            videoId: incomingId,
-            startSeconds: startSeconds,
-          });
-          setInitalStartSeconds(startSeconds);
-          console.log(
-            "[INFO] Loaded video:",
-            incomingId,
-            "with startSeconds:",
-            startSeconds
-          );
-          playerRef.current.playVideo();
-          lastVideoIdRef.current = incomingId;
-        } else {
-          playerRef.current.seekTo(Math.round(initalStartSeconds ?? 0), true);
-          console.log(
-            "[INFO] Seeking to:",
-            initalStartSeconds ?? 0,
-            "for video:",
-            incomingId
-          );
-        }
+      const startSeconds = computeStartSeconds(currentVideo);
+      if (shouldLoadPlayerVideo(loadedVideoIdentityRef.current, currentVideo)) {
+        playerRef.current.loadVideoById({
+          videoId: incomingId,
+          startSeconds: startSeconds,
+        });
+        console.log(
+          "[INFO] Loaded video:",
+          incomingId,
+          "with startSeconds:",
+          startSeconds
+        );
+        playerRef.current.playVideo();
+        loadedVideoIdentityRef.current = playerVideoIdentity(currentVideo);
       }
     } catch (_) {}
   };
@@ -378,23 +372,26 @@ const Room = () => {
     if (!isPlayerReady || !playerRef.current) return;
     if (!currentVideo || !currentVideo.id) return;
 
-    const incomingId = currentVideo.id;
-    const alreadyLoadedSameVideo = lastVideoIdRef.current === incomingId;
-    if (!alreadyLoadedSameVideo) {
+    if (shouldLoadPlayerVideo(loadedVideoIdentityRef.current, currentVideo)) {
       try {
-        const startSeconds = computeStartSeconds(incomingId);
+        const incomingId = currentVideo.id;
+        const startSeconds = computeStartSeconds(currentVideo);
         playerRef.current.loadVideoById({ videoId: incomingId, startSeconds });
         playerRef.current.playVideo();
-        lastVideoIdRef.current = incomingId;
+        loadedVideoIdentityRef.current = playerVideoIdentity(currentVideo);
       } catch (_) {}
     }
-  }, [isPlayerReady, currentVideo, playerRef, computeStartSeconds]);
+  }, [isPlayerReady, currentVideo, computeStartSeconds]);
 
   const onVideoEnd = () => {
-    if (!currentVideo || lastVideoIdRef.current !== currentVideo.id) return;
+    if (!currentVideo || loadedVideoIdentityRef.current !== playerVideoIdentity(currentVideo)) return;
     console.log("[INFO] Video ended, requesting next video");
     if (socket && playerKey) {
-      socket.emit("player-play-next", { roomId, playerKey });
+      socket.emit("player-play-next", {
+        roomId,
+        playerKey,
+        expectedQueueId: currentVideo.queueId,
+      });
     }
   };
 
@@ -422,10 +419,11 @@ const Room = () => {
         socket.emit("playback-state", {
           roomId,
           playerKey,
-          state: stateMap[state] || "unknown",
+          state: stateMap[state] || "unstarted",
           positionSec: positionSec || 0,
           durationSec: durationSec > 0 ? durationSec : null,
           videoId: currentVideo?.id || null,
+          queueId: currentVideo?.queueId || null,
         });
       } catch (err) {
         console.error("[ERR] Failed to get playback state:", err);
@@ -472,19 +470,26 @@ const Room = () => {
     localStorage.setItem(STORAGE_KEYS.ROOM_QUEUE_COLORS_ENABLED, String(enabled));
   };
 
-  // YouTube player options
-  const opts = {
-    height: "100%",
-    width: "100%",
-    playerVars: {
-      autoplay: 1,
-      modestbranding: 1,
-      rel: 0,
-      playsinline: 1,
-      mute: 0,
-      enablejsapi: 1,
-      fs: 0,
-    },
+  const handleDeleteRoomData = async () => {
+    if (!playerKey || deleteConfirmation !== roomId) return;
+    setIsDeletingRoom(true);
+    try {
+      const response = await fetch(`${getBackendUrl()}/api/rooms/${roomId}/data`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${playerKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: deleteConfirmation }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || `Deletion failed (${response.status})`);
+      }
+      removePlayerKey(roomId);
+      navigate("/", { replace: true });
+    } catch (error) {
+      setNotification({ open: true, message: error.message, severity: "error" });
+    } finally {
+      setIsDeletingRoom(false);
+    }
   };
 
   // If socket disconnects, try to keep playback going
@@ -495,6 +500,18 @@ const Room = () => {
       } catch (_) {}
     }
   }, [isConnected]);
+
+  if (roomClosedReason) {
+    return <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: 3 }}>
+      <Paper sx={{ p: 4, maxWidth: 520, textAlign: "center" }}>
+        <Typography variant="h4" gutterBottom>Room closed</Typography>
+        <Typography color="text.secondary" paragraph>
+          {roomClosedReason === "deleted_by_creator" ? "This room and its stored data were permanently deleted." : "This room closed after authenticated inactivity and can no longer be resumed."}
+        </Typography>
+        <Button variant="contained" onClick={() => navigate("/", { replace: true })}>Create a new room</Button>
+      </Paper>
+    </Box>;
+  }
 
   return (
     <Box
@@ -628,11 +645,13 @@ const Room = () => {
             >
               <YouTube
                 videoId={currentVideo?.id || undefined}
-                opts={opts}
+                opts={PLAYER_OPTIONS}
                 onReady={onPlayerReady}
                 onEnd={onVideoEnd}
                 onError={(error) => {
                   console.error("[ERR] YouTube player error:", error);
+                  setPlayerError(error.data || "unknown");
+                  setNotification({ open: true, message: "YouTube could not play this video. Retry or skip it.", severity: "error" });
                 }}
                 style={{
                   width: "100%",
@@ -642,6 +661,21 @@ const Room = () => {
                 allow="autoplay"
               />
             </Box>
+            {playerError && currentVideo && (
+              <Paper sx={{ position: "absolute", zIndex: 5, p: 2, textAlign: "center", background: "rgba(10,10,15,.92)" }}>
+                <Typography gutterBottom>Video playback failed (code {playerError}).</Typography>
+                <Box sx={{ display: "flex", gap: 1, justifyContent: "center" }}>
+                  <Button onClick={() => {
+                    try { playerRef.current?.loadVideoById({ videoId: currentVideo.id, startSeconds: 0 }); setPlayerError(null); }
+                    catch { /* Keep the recovery prompt visible. */ }
+                  }}>Retry</Button>
+                  <Button color="error" onClick={() => {
+                    socket?.emit("player-play-next", { roomId, playerKey, expectedQueueId: currentVideo.queueId });
+                    setPlayerError(null);
+                  }}>Skip</Button>
+                </Box>
+              </Paper>
+            )}
             {/* Exit Fullscreen Button - shown only in fullscreen mode */}
             {isFullscreen && (
               <Tooltip title="Exit Fullscreen">
@@ -1194,6 +1228,30 @@ const Room = () => {
               ))}
             </List>
           )}
+
+          <Box sx={{ mt: 3, p: 2, border: "1px solid rgba(239,68,68,.35)", borderRadius: 2 }}>
+            <Typography variant="subtitle2" color="error" gutterBottom>Delete room data</Typography>
+            <Typography variant="caption" color="text.secondary">
+              Permanently delete this active room, queue/history, controller records, correlated API usage, and anonymous policy record. This cannot be undone.
+            </Typography>
+            <TextField
+              fullWidth
+              size="small"
+              sx={{ mt: 2 }}
+              label="Enter the full room ID"
+              value={deleteConfirmation}
+              onChange={(event) => setDeleteConfirmation(event.target.value)}
+            />
+            <Button
+              color="error"
+              variant="outlined"
+              sx={{ mt: 1.5 }}
+              disabled={deleteConfirmation !== roomId || isDeletingRoom}
+              onClick={handleDeleteRoomData}
+            >
+              {isDeletingRoom ? "Deleting…" : "Permanently delete room data"}
+            </Button>
+          </Box>
 
           <Box
             sx={{ mt: 3, display: "flex", justifyContent: "flex-end" }}

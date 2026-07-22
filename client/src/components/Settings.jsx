@@ -21,6 +21,7 @@ import {
   removeControllerKey,
   getStoredPreferredUsername,
   normalizeStoredUsername,
+  storePreferredUsername,
 } from "../config";
 import useSocket from "../hooks/useSocket";
 
@@ -81,13 +82,7 @@ const Settings = ({
         const finalName = result?.username || preferredName;
         setUsername(finalName);
 
-        if (rememberMe) {
-          localStorage.setItem(STORAGE_KEYS.USERNAME, preferredName);
-          localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "true");
-        } else {
-          localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "false");
-          localStorage.setItem(STORAGE_KEYS.USERNAME, preferredName);
-        }
+        storePreferredUsername(preferredName, rememberMe);
 
         window.dispatchEvent(
           new StorageEvent("storage", {
@@ -108,13 +103,7 @@ const Settings = ({
     }
 
     // Fallback: store local preference only
-    if (rememberMe) {
-      localStorage.setItem(STORAGE_KEYS.USERNAME, preferredName);
-      localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "true");
-    } else {
-      localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, "false");
-      localStorage.setItem(STORAGE_KEYS.USERNAME, preferredName);
-    }
+    storePreferredUsername(preferredName, rememberMe);
 
     window.dispatchEvent(
       new StorageEvent("storage", {
