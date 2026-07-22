@@ -7,6 +7,7 @@ YouTube Karaoke Together is a collaborative YouTube queue with a shared room/pla
 - Shared YouTube player with realtime queue and playback state
 - QR-based mobile controllers with optional round-robin ordering
 - Confirmed “add to top” actions from controller search and drag/keyboard reordering on the controller queue page
+- Controller timeline seeking, exact timestamp entry, −15/+15 second jumps, play/pause, and persistent room volume
 - Server-validated video and playlist additions (up to 50 playable playlist entries per add)
 - Unfiltered YouTube search (`safeSearch=none`); YouTube availability, age, region, and embed restrictions still apply
 - Stable queue-item IDs and duplicate-safe skip/auto-advance
@@ -104,6 +105,7 @@ The default database is `data/youtube-karaoke.sqlite`. SQLite WAL mode, foreign 
 
 - Active rooms close after 24 hours without authenticated room activity.
 - Active room state is restored after restart without advancing playback by server downtime.
+- Playback volume is stored as room state, survives queue advances and restarts, and is reapplied whenever the player loads a video.
 - On closure, controller identity/display-name rows and registration credentials are deleted or revoked.
 - Minimized room/video history and locally metered YouTube API usage are live for at most 28 days, leaving headroom below the 30-calendar-day API-data limit for operational backup rotation.
 - Search queries, raw tokens, IP-address histories, user-agent histories, and controller names are not retained in closed-room history.
@@ -158,6 +160,8 @@ client/src/
 The large room and controller routes are lazy loaded. `Control.jsx` now delegates search, queue, controls, settings, consent, and realtime helpers to feature-owned modules instead of owning the whole UI and network flow.
 
 Pending queue items can be reordered from the controller Queue tab by dragging the left handle or using its keyboard controls. With round-robin disabled, a controller may reorder the shared pending queue. With round-robin enabled, each controller can reorder only videos it added; the server then rebuilds the interleaving without changing the fair turn sequence. Likewise, “add to top” places a confirmed search result at the top of the shared pending queue normally, or at the top of that controller’s personal order in round-robin mode. Neither operation changes or restarts the current video.
+
+The controller Controls tab can seek with an interactive timeline or −15/+15 second buttons, pause or resume playback, and set the room volume. Tapping the displayed current time opens exact `(hh:)mm:ss(.000)` entry; malformed timestamps and times beyond the current video duration are rejected before any command is sent. Commands carry the expected queue-item ID so a delayed seek or play/pause action cannot affect a newly advanced video. The server validates and persists the desired state, forwards the command only to authenticated room-player connections, and reconciles it with the player’s regular playback snapshots. After a saved paused checkpoint is restored, the room player’s native pause/play controls continue to work normally and publish their resulting state.
 
 ## Security and privacy notes
 

@@ -2,6 +2,12 @@ const crypto = require('crypto');
 const { AppError, cleanText, generateToken, isIdentifier, tokenDigest } = require('./security');
 
 const PLAYBACK_STATES = new Set(['unstarted', 'ended', 'playing', 'paused', 'buffering', 'cued']);
+const PLAYBACK_COMMANDS = new Set(['play', 'pause', 'seek', 'volume']);
+const MAX_SEEK_SECONDS = 24 * 60 * 60;
+
+function normalizeVolume(value, fallback = 100) {
+    return Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : fallback;
+}
 
 class RoomService {
     constructor({ db, config, logger = console }) {
@@ -25,6 +31,7 @@ class RoomService {
                 room.roundRobin.lastServedControllerId = room.roundRobin.participants[room.roundRobin.lastServedIdx] || null;
                 delete room.roundRobin.lastServedIdx;
             }
+            room.playback.volume = normalizeVolume(room.playback.volume);
             this.rooms.set(room.id, room);
         }
         this.logger.info(`[INFO] Restored ${this.rooms.size} active room(s) from SQLite.`);
@@ -54,6 +61,7 @@ class RoomService {
                 updatedAt: now,
                 videoId: null,
                 queueId: null,
+                volume: 100,
             },
             allowNewControllers: true,
             nextQueueId: 1,
@@ -388,8 +396,10 @@ class RoomService {
         if (update.state !== undefined && !PLAYBACK_STATES.has(update.state)) throw new AppError('invalid_playback', 'Invalid playback state');
         const position = update.positionSec;
         const duration = update.durationSec;
+        const volume = update.volume;
         if (position !== undefined && (!Number.isFinite(position) || position < 0)) throw new AppError('invalid_playback', 'Invalid playback position');
         if (duration !== undefined && duration !== null && (!Number.isFinite(duration) || duration < 0)) throw new AppError('invalid_playback', 'Invalid playback duration');
+        if (volume !== undefined && (!Number.isFinite(volume) || volume < 0 || volume > 100)) throw new AppError('invalid_playback', 'Invalid playback volume');
         if (Number.isFinite(position) && Number.isFinite(duration) && position > duration + 5) throw new AppError('invalid_playback', 'Playback position exceeds duration');
         if (update.queueId !== undefined && update.queueId !== null && String(update.queueId) !== String(room.currentVideo?.queueId)) {
             throw new AppError('stale_playback', 'Playback update is for a stale queue item');
@@ -400,6 +410,7 @@ class RoomService {
         if (update.state !== undefined) room.playback.state = update.state;
         if (position !== undefined) room.playback.positionSec = position;
         if (duration !== undefined) room.playback.durationSec = duration;
+        if (volume !== undefined) room.playback.volume = normalizeVolume(volume);
         room.playback.videoId = room.currentVideo?.id || null;
         room.playback.queueId = room.currentVideo?.queueId || null;
         room.playback.updatedAt = Date.now();
@@ -413,7 +424,58 @@ class RoomService {
         return room.playback;
     }
 
+    controlPlayback(roomId, token, command) {
+        const room = this.requireRoom(roomId);
+        const controller = this.controller(room, token);
+        if (!command || typeof command !== 'object' || Array.isArray(command) || !PLAYBACK_COMMANDS.has(command.type)) {
+            throw new AppError('invalid_playback_command', 'Invalid playback command');
+        }
+
+        const requiresCurrentVideo = command.type !== 'volume';
+        if (requiresCurrentVideo && !room.currentVideo) {
+            throw new AppError('nothing_playing', 'There is no current video to control', 409);
+        }
+        if (requiresCurrentVideo && (command.expectedQueueId === undefined || command.expectedQueueId === null ||
+            String(command.expectedQueueId) !== String(room.currentVideo.queueId))) {
+            throw new AppError('stale_playback', 'The current video changed before the command was applied', 409);
+        }
+
+        const playerCommand = {
+            type: command.type,
+            queueId: room.currentVideo?.queueId || null,
+        };
+        if (command.type === 'play') room.playback.state = 'playing';
+        if (command.type === 'pause') room.playback.state = 'paused';
+        if (command.type === 'seek') {
+            if (!Number.isFinite(command.positionSec) || command.positionSec < 0 || command.positionSec > MAX_SEEK_SECONDS) {
+                throw new AppError('invalid_playback_command', 'Seek position is invalid');
+            }
+            const duration = room.playback.durationSec;
+            const positionSec = Number.isFinite(duration)
+                ? Math.min(command.positionSec, duration)
+                : command.positionSec;
+            room.playback.positionSec = positionSec;
+            playerCommand.positionSec = positionSec;
+        }
+        if (command.type === 'volume') {
+            if (!Number.isFinite(command.volume) || command.volume < 0 || command.volume > 100) {
+                throw new AppError('invalid_playback_command', 'Volume must be between 0 and 100');
+            }
+            const volume = normalizeVolume(command.volume);
+            room.playback.volume = volume;
+            playerCommand.volume = volume;
+        }
+
+        room.playback.updatedAt = Date.now();
+        this.mutate(room, 'playback_controlled', {
+            controllerId: controller.id,
+            command: command.type,
+        });
+        return { playback: room.playback, playerCommand };
+    }
+
     setCurrentVideo(room, video) {
+        const volume = normalizeVolume(room.playback?.volume);
         room.currentVideo = video;
         if (video) video.startedAt ||= Date.now();
         room.playback = {
@@ -423,6 +485,7 @@ class RoomService {
             updatedAt: Date.now(),
             videoId: video?.id || null,
             queueId: video?.queueId || null,
+            volume,
         };
         if (video?.controllerId) {
             this.upsertParticipant(room, video.controllerId);

@@ -486,7 +486,7 @@ class AppDatabase {
         this.db.transaction(() => {
             this.db.prepare(`UPDATE rooms SET status='closed', closed_at=?, updated_at=?, close_reason=?,
                 current_video_json=NULL, round_robin_json='{"participants":[],"lastServedControllerId":null}',
-                playback_json='{"state":"unstarted","positionSec":0,"durationSec":null,"videoId":null}' WHERE id=?`)
+                playback_json='{"state":"unstarted","positionSec":0,"durationSec":null,"videoId":null,"queueId":null,"volume":100}' WHERE id=?`)
                 .run(closedAt, closedAt, reason, roomId);
             this.db.prepare("UPDATE room_queue_items SET status='abandoned', position=NULL, ended_at=COALESCE(ended_at, ?) WHERE room_id=? AND status IN ('queued','playing')")
                 .run(closedAt, roomId);

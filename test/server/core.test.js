@@ -151,6 +151,7 @@ test('malformed socket payloads return structured errors without terminating the
         'join-room-admin', 'register-controller', 'auth-controller', 'rename-controller',
         'update-controller-color', 'add-to-queue', 'play-next', 'player-play-next',
         'request-room-state', 'remove-from-queue', 'reorder-queue', 'update-settings', 'playback-state',
+        'control-playback',
         'admin-toggle-controller', 'admin-remove-controller', 'admin-toggle-registration',
     ];
     const noPayload = await new Promise((resolve) => {
@@ -206,6 +207,92 @@ test('queue mutations use stable IDs and duplicate advances are idempotent', () 
     service.removeFromQueue(created.room.id, registration.controllerKey, removeId);
     assert.equal(created.room.queue.some((item) => item.queueId === removeId), false);
     db.close();
+});
+
+test('authenticated playback controls validate the current item and preserve volume across videos', () => {
+    const config = loadConfig({ nodeEnv: 'test', databasePath: ':memory:', tokenPepper: 'playback-controls-pepper' }, quietLogger());
+    const db = new AppDatabase(':memory:', { logger: quietLogger() });
+    const service = new RoomService({ db, config, logger: quietLogger() });
+    const created = service.createRoom();
+    const singer = service.registerController(created.room.id, created.registrationToken, 'Singer');
+    service.addVideos(created.room.id, singer.controllerKey, [
+        { id: 'aaaaaaaaaaa', title: 'Playing' },
+        { id: 'bbbbbbbbbbb', title: 'Next' },
+    ]);
+    const queueId = created.room.currentVideo.queueId;
+    service.updatePlayback(created.room.id, created.playerKey, {
+        queueId, videoId: created.room.currentVideo.id, state: 'playing',
+        positionSec: 30, durationSec: 120, volume: 100,
+    });
+
+    const paused = service.controlPlayback(created.room.id, singer.controllerKey, {
+        type: 'pause', expectedQueueId: queueId,
+    });
+    assert.equal(paused.playback.state, 'paused');
+    assert.deepEqual(paused.playerCommand, { type: 'pause', queueId });
+    assert.equal(service.controlPlayback(created.room.id, singer.controllerKey, {
+        type: 'seek', expectedQueueId: queueId, positionSec: 500,
+    }).playback.positionSec, 120);
+    assert.equal(service.controlPlayback(created.room.id, singer.controllerKey, {
+        type: 'volume', volume: 37.6,
+    }).playback.volume, 38);
+    assert.equal(service.controlPlayback(created.room.id, singer.controllerKey, {
+        type: 'play', expectedQueueId: queueId,
+    }).playback.state, 'playing');
+    assert.throws(() => service.controlPlayback(created.room.id, singer.controllerKey, {
+        type: 'seek', expectedQueueId: 'stale', positionSec: 15,
+    }), /current video changed/i);
+    assert.throws(() => service.controlPlayback(created.room.id, singer.controllerKey, {
+        type: 'volume', volume: 101,
+    }), /between 0 and 100/i);
+
+    service.advance(created.room.id, singer.controllerKey, queueId, 'controller');
+    assert.equal(created.room.playback.volume, 38);
+    assert.equal(created.room.playback.positionSec, 0);
+    db.close();
+});
+
+test('controller playback commands are acknowledged and forwarded to the room player', async () => {
+    const instance = await runtime({ tokenPepper: 'playback-socket-pepper' });
+    const created = instance.roomService.createRoom();
+    const singer = instance.roomService.registerController(created.room.id, created.registrationToken, 'Singer');
+    instance.roomService.addVideos(created.room.id, singer.controllerKey, [
+        { id: 'aaaaaaaaaaa', title: 'Playing' },
+    ]);
+    instance.roomService.updatePlayback(created.room.id, created.playerKey, {
+        queueId: created.room.currentVideo.queueId,
+        videoId: created.room.currentVideo.id,
+        state: 'playing',
+        positionSec: 10,
+        durationSec: 120,
+    });
+
+    const port = instance.httpServer.address().port;
+    const playerSocket = createClient(`http://127.0.0.1:${port}`, { transports: ['websocket'], path: '/socket.io/' });
+    const controllerSocket = createClient(`http://127.0.0.1:${port}`, { transports: ['websocket'], path: '/socket.io/' });
+    await Promise.all([playerSocket, controllerSocket].map((socket) => new Promise((resolve, reject) => {
+        socket.once('connect', resolve);
+        socket.once('connect_error', reject);
+    })));
+    const emit = (socket, event, payload) => new Promise((resolve, reject) => {
+        socket.timeout(1000).emit(event, payload, (error, response) => error ? reject(error) : resolve(response));
+    });
+    await emit(playerSocket, 'join-room-admin', { roomId: created.room.id, playerKey: created.playerKey });
+    await emit(controllerSocket, 'auth-controller', { roomId: created.room.id, controllerKey: singer.controllerKey });
+
+    const forwarded = new Promise((resolve) => playerSocket.once('player-command', resolve));
+    const response = await emit(controllerSocket, 'control-playback', {
+        roomId: created.room.id,
+        controllerKey: singer.controllerKey,
+        command: { type: 'seek', expectedQueueId: created.room.currentVideo.queueId, positionSec: 55 },
+    });
+    assert.equal(response.ok, true);
+    assert.equal(response.playback.positionSec, 55);
+    assert.deepEqual(await forwarded, {
+        type: 'seek', queueId: created.room.currentVideo.queueId, positionSec: 55,
+    });
+    playerSocket.close();
+    controllerSocket.close();
 });
 
 test('priority additions and room-wide queue reordering preserve the active video', () => {
@@ -308,6 +395,7 @@ test('active room state and hashed credentials survive a database restart', () =
         registration.controllerKey,
         created.room.queue.map((item) => item.queueId).reverse()
     );
+    service.controlPlayback(created.room.id, registration.controllerKey, { type: 'volume', volume: 42 });
     db.close();
 
     db = new AppDatabase(filename, { logger: quietLogger() });
@@ -317,6 +405,7 @@ test('active room state and hashed credentials survive a database restart', () =
     assert.deepEqual(restored.queue.map((item) => item.title), [
         'Persisted queue 2', 'Persisted queue 1', 'Persisted priority',
     ]);
+    assert.equal(restored.playback.volume, 42);
     assert.equal(service.controller(restored, registration.controllerKey).name, 'Persistent Singer');
     assert.equal(service.validatePlayer(restored, created.playerKey), true);
     db.close();
