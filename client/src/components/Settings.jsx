@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import SettingsIcon from "@mui/icons-material/Settings";
 import ShuffleIcon from "@mui/icons-material/Shuffle";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import {
   STORAGE_KEYS,
   getStoredControllerKey,
@@ -24,6 +24,7 @@ import {
   storePreferredUsername,
 } from "../config";
 import useSocket from "../hooks/useSocket";
+import { announceUsername } from "../features/controller/usernameSync";
 
 const Settings = ({
   queueColorsEnabled,
@@ -50,19 +51,18 @@ const Settings = ({
 
   const { socket, isConnected, renameController } = useSocket();
 
-  // Listen for changes to localStorage
+  // Genuine cross-tab preference changes only. Saves in this window announce
+  // themselves through announceUsername instead, so they cannot clobber this
+  // field, which holds the name the server assigned including any suffix.
   useEffect(() => {
-    const handleStorageChange = () => {
-      const savedUsername = localStorage.getItem(STORAGE_KEYS.USERNAME);
-      const normalized = normalizeStoredUsername(savedUsername || "");
-      if (normalized !== username) {
-        setUsername(normalized);
-      }
+    const handleStorageChange = (event) => {
+      if (event.key && event.key !== STORAGE_KEYS.USERNAME) return;
+      setUsername(getStoredPreferredUsername());
     };
 
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
-  }, [username]);
+  }, []);
 
   const handleSave = async () => {
     const preferredName = normalizeStoredUsername(username);
@@ -83,14 +83,7 @@ const Settings = ({
         setUsername(finalName);
 
         storePreferredUsername(preferredName, rememberMe);
-
-        window.dispatchEvent(
-          new StorageEvent("storage", {
-            key: STORAGE_KEYS.USERNAME,
-            newValue: preferredName,
-            oldValue: localStorage.getItem(STORAGE_KEYS.USERNAME),
-          })
-        );
+        announceUsername(finalName);
 
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
@@ -104,14 +97,7 @@ const Settings = ({
 
     // Fallback: store local preference only
     storePreferredUsername(preferredName, rememberMe);
-
-    window.dispatchEvent(
-      new StorageEvent("storage", {
-        key: STORAGE_KEYS.USERNAME,
-        newValue: preferredName,
-        oldValue: localStorage.getItem(STORAGE_KEYS.USERNAME),
-      })
-    );
+    announceUsername(preferredName);
 
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);

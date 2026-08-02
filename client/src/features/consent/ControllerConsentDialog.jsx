@@ -1,6 +1,6 @@
 import React from "react";
 import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Link, Typography } from "@mui/material";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { CURRENT_PRIVACY_POLICY_VERSION } from "../../config";
 import { persistCurrentConsent } from "./consentStorage";
 

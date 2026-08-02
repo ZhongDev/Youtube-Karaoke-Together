@@ -4,7 +4,7 @@ import {
   Routes,
   Route,
   Navigate,
-} from "react-router-dom";
+} from "react-router";
 import { Box, CircularProgress, CssBaseline, ThemeProvider, createTheme } from "@mui/material";
 import HomePage from "./components/HomePage.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.jsx";

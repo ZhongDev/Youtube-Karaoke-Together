@@ -22,7 +22,7 @@ import {
   Settings,
   MusicNote,
 } from "@mui/icons-material";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { CURRENT_PRIVACY_POLICY_VERSION, getBackendUrl, storePlayerKey } from "../config";
 import {
   acceptPrivacyUpdate,

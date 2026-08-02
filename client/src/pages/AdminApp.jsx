@@ -1,5 +1,5 @@
 import React from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router";
 import AdminDashboard from "../features/admin/AdminDashboard";
 import AdminLogin from "../features/admin/AdminLogin";
 
