@@ -31,6 +31,10 @@ All notable changes to this project will be documented in this file.
 - Enlarged controller queue reorder handles to a 48×48-pixel touch target for more reliable mobile dragging
 - Stopped the controller Settings display name from clearing itself after a successful save when “Remember me” was off
 - Controller screens now show the display name the room actually assigned, including the collision suffix added when the chosen name is already taken
+- Fixed round-robin skipping singers: the rotation restarted at the earliest-registered controller whenever the current singer had no pending videos of their own, pushing whoever's turn it was back a full cycle
+- Round-robin now hands the rotation to the departing controller's predecessor when the last served controller leaves the room, instead of resetting it
+- Queue reorders that resolve to no change are now persisted and broadcast, so a controller applying reorders optimistically cannot keep a diverged queue
+- Queue items whose controller record is gone are kept out of the persisted round-robin participant list and can no longer be dropped from the queue
 
 ### Documentation
 

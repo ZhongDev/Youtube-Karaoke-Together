@@ -17,6 +17,14 @@ function quietLogger() {
     return { info() {}, warn() {}, error() {} };
 }
 
+function seededRandom(seed) {
+    let state = seed >>> 0;
+    return () => {
+        state = (state * 1664525 + 1013904223) >>> 0;
+        return state / 4294967296;
+    };
+}
+
 async function runtime(overrides = {}) {
     const config = loadConfig({
         nodeEnv: 'test',
@@ -372,6 +380,175 @@ test('round-robin ordering tracks the last served stable controller ID', () => {
     assert.deepEqual(created.room.queue.map((video) => video.title), ['C1', 'B2', 'C2']);
     assert.equal(created.room.roundRobin.lastServedControllerId, singerB.controller.id);
     db.close();
+});
+
+test('round-robin resumes the rotation when the current singer has nothing queued', () => {
+    const config = loadConfig({ nodeEnv: 'test', databasePath: ':memory:', tokenPepper: 'rotation-resume-pepper' }, quietLogger());
+    const db = new AppDatabase(':memory:', { logger: quietLogger() });
+    const service = new RoomService({ db, config, logger: quietLogger() });
+    const created = service.createRoom();
+    const singerA = service.registerController(created.room.id, created.registrationToken, 'Singer A');
+    const singerB = service.registerController(created.room.id, created.registrationToken, 'Singer B');
+    const singerC = service.registerController(created.room.id, created.registrationToken, 'Singer C');
+    service.updateSettings(created.room.id, singerA.controllerKey, { roundRobinEnabled: true });
+
+    // Singer B's only video becomes the current video, so B holds the rotation
+    // position while owning nothing in the pending queue.
+    service.addVideos(created.room.id, singerB.controllerKey, [{ id: 'bbbbbbbbbb1', title: 'B1' }]);
+    service.addVideos(created.room.id, singerA.controllerKey, [
+        { id: 'aaaaaaaaaa1', title: 'A1' }, { id: 'aaaaaaaaaa2', title: 'A2' },
+    ]);
+    service.addVideos(created.room.id, singerC.controllerKey, [
+        { id: 'cccccccccc1', title: 'C1' }, { id: 'cccccccccc2', title: 'C2' },
+    ]);
+
+    assert.equal(created.room.currentVideo.title, 'B1');
+    assert.equal(created.room.roundRobin.lastServedControllerId, singerB.controller.id);
+    // Singer C registered after B, so C takes the next turn. Resolving the
+    // rotation against only the controllers holding queued videos would lose
+    // B's position and hand the turn back to the earliest-registered singer.
+    assert.deepEqual(created.room.queue.map((item) => item.title), ['C1', 'A1', 'C2', 'A2']);
+    db.close();
+});
+
+test('round-robin never starves a controller that keeps videos queued', () => {
+    // Property: between two consecutive turns for one controller, every other
+    // controller that held queued videos for that entire interval must be
+    // served at least once. Seeded so any failure replays deterministically.
+    for (let seed = 1; seed <= 12; seed += 1) {
+        const random = seededRandom(seed);
+        const config = loadConfig({ nodeEnv: 'test', databasePath: ':memory:', tokenPepper: 'starvation-pepper' }, quietLogger());
+        const db = new AppDatabase(':memory:', { logger: quietLogger() });
+        const service = new RoomService({ db, config, logger: quietLogger() });
+        const created = service.createRoom();
+        const room = created.room;
+        const singers = ['A', 'B', 'C', 'D'].map((name) => service.registerController(room.id, created.registrationToken, name));
+        service.updateSettings(room.id, singers[0].controllerKey, { roundRobinEnabled: true });
+        const turns = [];
+        let videoNumber = 0;
+
+        for (let step = 0; step < 150; step += 1) {
+            const singer = singers[Math.floor(random() * singers.length)];
+            if (random() < 0.5 && room.queue.length < 20) {
+                videoNumber += 1;
+                service.addVideos(room.id, singer.controllerKey, [
+                    { id: `video${String(videoNumber).padStart(6, '0')}`, title: `Video ${videoNumber}` },
+                ], { priority: random() < 0.25 });
+            } else if (room.currentVideo) {
+                const waiting = new Set(room.queue.map((item) => item.controllerId));
+                const result = service.advance(room.id, singer.controllerKey, room.currentVideo.queueId, 'controller');
+                if (result.advanced && room.currentVideo) {
+                    turns.push({ served: room.currentVideo.controllerId, waiting });
+                }
+            }
+        }
+        db.close();
+
+        for (let first = 0; first < turns.length; first += 1) {
+            const next = turns.findIndex((turn, index) => index > first && turn.served === turns[first].served);
+            if (next < 0) continue;
+            const servedBetween = new Set(turns.slice(first + 1, next + 1).map((turn) => turn.served));
+            const interval = turns.slice(first, next + 1);
+            for (const candidate of turns[first].waiting) {
+                if (candidate === turns[first].served || servedBetween.has(candidate)) continue;
+                assert.ok(
+                    !interval.every((turn) => turn.waiting.has(candidate)),
+                    `seed ${seed}: a controller kept videos queued through a full rotation without receiving a turn`
+                );
+            }
+        }
+    }
+});
+
+test('removing the last served controller hands the rotation to their predecessor', () => {
+    const config = loadConfig({ nodeEnv: 'test', databasePath: ':memory:', tokenPepper: 'kick-handoff-pepper' }, quietLogger());
+    const db = new AppDatabase(':memory:', { logger: quietLogger() });
+    const service = new RoomService({ db, config, logger: quietLogger() });
+    const created = service.createRoom();
+    const singerA = service.registerController(created.room.id, created.registrationToken, 'Singer A');
+    const singerB = service.registerController(created.room.id, created.registrationToken, 'Singer B');
+    const singerC = service.registerController(created.room.id, created.registrationToken, 'Singer C');
+    service.updateSettings(created.room.id, singerA.controllerKey, { roundRobinEnabled: true });
+
+    // Draining the room is the only way B can hold the rotation without owning
+    // the current video, which is what lets the removal below reach the branch.
+    service.addVideos(created.room.id, singerB.controllerKey, [{ id: 'bbbbbbbbbb1', title: 'B1' }]);
+    service.advance(created.room.id, singerB.controllerKey, created.room.currentVideo.queueId, 'controller');
+    assert.equal(created.room.currentVideo, null);
+    assert.equal(created.room.roundRobin.lastServedControllerId, singerB.controller.id);
+
+    service.removeController(created.room.id, created.playerKey, singerB.controller.id);
+    assert.deepEqual(created.room.roundRobin.participants, [singerA.controller.id, singerC.controller.id]);
+    // Resuming from A means the next turn falls to C, B's successor in the ring.
+    assert.equal(created.room.roundRobin.lastServedControllerId, singerA.controller.id);
+    db.close();
+});
+
+test('queue items without a controller keep a rotation slot and stay out of the ring', () => {
+    const config = loadConfig({ nodeEnv: 'test', databasePath: ':memory:', tokenPepper: 'orphan-pepper' }, quietLogger());
+    const db = new AppDatabase(':memory:', { logger: quietLogger() });
+    const service = new RoomService({ db, config, logger: quietLogger() });
+    const created = service.createRoom();
+    const singerA = service.registerController(created.room.id, created.registrationToken, 'Singer A');
+    const singerB = service.registerController(created.room.id, created.registrationToken, 'Singer B');
+    const singerC = service.registerController(created.room.id, created.registrationToken, 'Singer C');
+    service.updateSettings(created.room.id, singerA.controllerKey, { roundRobinEnabled: true });
+    service.addVideos(created.room.id, singerA.controllerKey, [
+        { id: 'aaaaaaaaaa1', title: 'A1' }, { id: 'aaaaaaaaaa2', title: 'A2' },
+    ]);
+    service.addVideos(created.room.id, singerB.controllerKey, [
+        { id: 'bbbbbbbbbb1', title: 'B1' }, { id: 'bbbbbbbbbb2', title: 'B2' },
+    ]);
+    service.addVideos(created.room.id, singerC.controllerKey, [
+        { id: 'cccccccccc1', title: 'C1' }, { id: 'cccccccccc2', title: 'C2' },
+    ]);
+
+    // Stand in for a restored room whose controller rows were cleared: the queue
+    // items survive with no owner while other controllers still hold the ring.
+    const queued = created.room.queue.map((item) => String(item.queueId)).sort();
+    for (const item of created.room.queue) {
+        if (item.controllerId === singerC.controller.id) delete item.controllerId;
+    }
+    service.reorderRoundRobin(created.room);
+
+    assert.deepEqual(created.room.queue.map((item) => String(item.queueId)).sort(), queued);
+    assert.equal(created.room.roundRobin.participants.includes('unknown'), false);
+    assert.equal(created.room.roundRobin.participants.every((id) => typeof id === 'string'), true);
+    db.close();
+});
+
+test('a reorder that changes nothing is still persisted and broadcast', async () => {
+    const instance = await runtime({ tokenPepper: 'reorder-noop-pepper' });
+    const created = instance.roomService.createRoom();
+    const singer = instance.roomService.registerController(created.room.id, created.registrationToken, 'Singer');
+    instance.roomService.addVideos(created.room.id, singer.controllerKey, [
+        { id: 'aaaaaaaaaa1', title: 'One' }, { id: 'aaaaaaaaaa2', title: 'Two' }, { id: 'aaaaaaaaaa3', title: 'Three' },
+    ]);
+    const versionBefore = created.room.version;
+    const currentOrder = created.room.queue.map((item) => item.queueId);
+
+    const port = instance.httpServer.address().port;
+    const socket = createClient(`http://127.0.0.1:${port}`, { transports: ['websocket'], path: '/socket.io/' });
+    await new Promise((resolve, reject) => {
+        socket.once('connect', resolve);
+        socket.once('connect_error', reject);
+    });
+    await new Promise((resolve, reject) => {
+        socket.timeout(1000).emit('auth-controller', { roomId: created.room.id, controllerKey: singer.controllerKey },
+            (error, response) => error ? reject(error) : resolve(response));
+    });
+
+    const broadcast = new Promise((resolve) => socket.once('queue-updated', resolve));
+    const acknowledgement = await new Promise((resolve, reject) => {
+        socket.timeout(1000).emit('reorder-queue', {
+            roomId: created.room.id, controllerKey: singer.controllerKey, orderedQueueIds: currentOrder,
+        }, (error, response) => error ? reject(error) : resolve(response));
+    });
+    assert.equal(acknowledgement.ok, true);
+    assert.equal(acknowledgement.changed, false);
+    assert.deepEqual((await broadcast).map((item) => item.queueId), currentOrder);
+    assert.ok(created.room.version > versionBefore, 'an unchanged reorder must still write the room back');
+    socket.close();
 });
 
 test('active room state and hashed credentials survive a database restart', () => {

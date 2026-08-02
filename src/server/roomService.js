@@ -4,6 +4,9 @@ const { AppError, cleanText, generateToken, isIdentifier, tokenDigest } = requir
 const PLAYBACK_STATES = new Set(['unstarted', 'ended', 'playing', 'paused', 'buffering', 'cued']);
 const PLAYBACK_COMMANDS = new Set(['play', 'pause', 'seek', 'volume']);
 const MAX_SEEK_SECONDS = 24 * 60 * 60;
+// Queue items whose controller record has gone share one rotation slot. Held
+// outside the persisted participant ring so it cannot accumulate there.
+const ORPHANED_PARTICIPANT = Symbol('orphaned participant');
 
 function normalizeVolume(value, fallback = 100) {
     return Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : fallback;
@@ -357,6 +360,10 @@ class RoomService {
                 scope: room.settings.roundRobinEnabled ? 'controller' : 'room',
                 count: normalizedIds.length,
             });
+        } else {
+            // A no-op earns no audit event, but the rebuild above can still have
+            // extended the participant ring, so the room must be written back.
+            this.touchAuthenticated(room);
         }
         return { changed, scope: room.settings.roundRobinEnabled ? 'controller' : 'room', room };
     }
@@ -498,10 +505,17 @@ class RoomService {
     }
 
     removeParticipant(room, controllerId) {
-        const index = room.roundRobin.participants.indexOf(controllerId);
+        const participants = room.roundRobin.participants;
+        const index = participants.indexOf(controllerId);
         if (index < 0) return;
-        room.roundRobin.participants.splice(index, 1);
-        if (room.roundRobin.lastServedControllerId === controllerId) room.roundRobin.lastServedControllerId = null;
+        if (room.roundRobin.lastServedControllerId === controllerId) {
+            // Hand the rotation to the departing controller's predecessor so the
+            // next rebuild resumes with their successor rather than restarting at
+            // the earliest-registered controller.
+            const predecessor = participants[(index - 1 + participants.length) % participants.length];
+            room.roundRobin.lastServedControllerId = predecessor === controllerId ? null : predecessor;
+        }
+        participants.splice(index, 1);
     }
 
     pruneParticipant(room, controllerId) {
@@ -515,15 +529,30 @@ class RoomService {
         if (!room.settings.roundRobinEnabled || room.queue.length < 2) return;
         const buckets = new Map();
         for (const item of room.queue) {
-            const participant = item.controllerId || 'unknown';
-            this.upsertParticipant(room, participant);
+            const participant = item.controllerId || ORPHANED_PARTICIPANT;
+            if (item.controllerId) this.upsertParticipant(room, item.controllerId);
             if (!buckets.has(participant)) buckets.set(participant, []);
             buckets.get(participant).push(item);
         }
-        const participants = room.roundRobin.participants.filter((id) => buckets.has(id));
+        // Rotate the participant ring to resume after the last served controller
+        // before dropping the ones holding nothing. The current singer usually
+        // owns no queued item, so filtering first loses their ring position and
+        // silently restarts the rotation at the earliest-registered controller.
+        const ring = room.roundRobin.participants;
+        const lastServedIndex = ring.indexOf(room.roundRobin.lastServedControllerId);
+        const participants = [];
+        for (let step = 1; step <= ring.length; step += 1) {
+            const participant = ring[(lastServedIndex + step + ring.length) % ring.length];
+            if (buckets.has(participant)) participants.push(participant);
+        }
+        // Every bucket needs a slot. The interleave below replaces the whole
+        // queue, so any bucket left out would have its videos silently dropped.
+        for (const participant of buckets.keys()) {
+            if (!participants.includes(participant)) participants.push(participant);
+        }
         if (participants.length < 2) return;
         const ordered = [];
-        let cursor = participants.indexOf(room.roundRobin.lastServedControllerId);
+        let cursor = -1;
         while (ordered.length < room.queue.length) {
             let selected = -1;
             for (let step = 1; step <= participants.length; step += 1) {
