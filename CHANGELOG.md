@@ -37,6 +37,7 @@ All notable changes to this project will be documented in this file.
 - Queue items whose controller record is gone are kept out of the persisted round-robin participant list and can no longer be dropped from the queue
 - Stopped room players rewriting the whole room once per second while paused or ended; playback is now checkpointed when its state changes or its position advances
 - Paused, ended, and idle room players no longer count as room activity, so a forgotten browser tab can no longer hold a room open past the inactivity window
+- Fixed automatic backups never running on a host that restarts more often than the backup interval: the schedule now follows the time since the last backup instead of process uptime, and an overdue backup is taken during startup
 
 ### Documentation
 
