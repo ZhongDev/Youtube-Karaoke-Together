@@ -8,7 +8,7 @@ import {
   List,
   ListItem,
 } from "@mui/material";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { ArrowBack, Email } from "@mui/icons-material";
 
 const Contact = () => {

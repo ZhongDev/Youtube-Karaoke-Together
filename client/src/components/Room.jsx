@@ -20,7 +20,7 @@ import {
   TextField,
 } from "@mui/material";
 import YouTube from "react-youtube";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import SettingsIcon from "@mui/icons-material/Settings";
 import SignalWifiOffIcon from "@mui/icons-material/SignalWifiOff";
 import QueueMusicIcon from "@mui/icons-material/QueueMusic";

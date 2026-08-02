@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import SettingsIcon from "@mui/icons-material/Settings";
 import ShuffleIcon from "@mui/icons-material/Shuffle";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import {
   STORAGE_KEYS,
   getStoredControllerKey,

@@ -40,7 +40,7 @@ import {
   OpenInNew as OpenInNewIcon,
   DragIndicator as DragIndicatorIcon,
 } from "@mui/icons-material";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import useSocket from "../hooks/useSocket";
 import { decodeHtmlEntities } from "../config";
 import { reorderQueueForDrag } from "../features/controller/queueOrdering";

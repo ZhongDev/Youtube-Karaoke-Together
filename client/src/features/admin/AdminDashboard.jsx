@@ -3,7 +3,7 @@ import {
   Alert, AppBar, Box, Button, CircularProgress, Container, FormControl, InputLabel, MenuItem,
   Paper, Select, Stack, Tab, Tabs, Toolbar, Typography,
 } from "@mui/material";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { adminApi } from "./adminApi";
 import AdministratorsPanel from "./AdministratorsPanel";
 import RoomDetailDialog from "./RoomDetailDialog";

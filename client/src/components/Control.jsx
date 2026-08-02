@@ -5,7 +5,7 @@ import {
   Alert,
   Snackbar,
 } from "@mui/material";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import Queue from "./Queue.jsx";
 import Settings from "./Settings.jsx";
 import useSocket from "../hooks/useSocket";

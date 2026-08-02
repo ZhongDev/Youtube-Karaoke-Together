@@ -18,7 +18,7 @@ YouTube Karaoke Together is a collaborative YouTube queue with a shared room/pla
 
 ## Requirements
 
-- Node.js 22 LTS (minimum supported by the current toolchain: Node 20.19 or 22.12)
+- Node.js 22.22.0 or newer (required by React Router 8; upgrade the deployment host before updating)
 - npm 10+
 - A YouTube Data API v3 key
 - A Google OAuth web client ID if the administrator dashboard is enabled

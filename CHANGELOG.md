@@ -16,6 +16,14 @@ All notable changes to this project will be documented in this file.
 
 - Room players now restore paused playback intent and saved volume instead of always forcing resumed videos to play
 - Bumped the root and client application versions to 3.2.0
+- Replaced `react-router-dom` 7 with `react-router` 8, which now provides the DOM router exports directly
+- Raised the minimum supported Node.js version to 22.22.0, as required by React Router 8
+
+### Security
+
+- Updated `brace-expansion` to resolve a high-severity denial-of-service advisory (GHSA-mh99-v99m-4gvg)
+- Updated `postcss` to resolve a high-severity source-map path-traversal advisory (GHSA-r28c-9q8g-f849)
+- Moved to `react-router` 8 to resolve a high-severity advisory (GHSA-qwww-vcr4-c8h2) that has no fixed release on the `react-router-dom` 7 line
 
 ### Fixed
 
@@ -26,6 +34,7 @@ All notable changes to this project will be documented in this file.
 
 - Updated the root and client READMEs with controller playback controls and persistent-volume behavior
 - Documented a simple PM2 and Nginx production setup, verification flow, reboot persistence, and update procedure
+- Recorded the Node.js 22.22.0 minimum in the README requirements
 
 ## [3.1.0] - Queue Ordering
 
