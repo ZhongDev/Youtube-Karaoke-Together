@@ -20,6 +20,8 @@ const {
 } = require('./security');
 const { YouTubeService } = require('./youtubeService');
 
+const BACKUP_FILE_PATTERN = /^youtube-karaoke-.*\.sqlite$/;
+
 function numericQuery(value, fallback, max = 100) {
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), max) : fallback;
@@ -287,6 +289,26 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
         if (expired.length || purged.rooms || purged.usage) logger.info(`[INFO] Maintenance expired=${expired.length} purgedRooms=${purged.rooms} purgedUsage=${purged.usage}`);
     };
 
+    const backupFiles = () => {
+        if (!fs.existsSync(config.backupDir)) return [];
+        return fs.readdirSync(config.backupDir, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && BACKUP_FILE_PATTERN.test(entry.name))
+            .map((entry) => {
+                const filename = path.join(config.backupDir, entry.name);
+                return { filename, modifiedAt: fs.statSync(filename).mtimeMs };
+            });
+    };
+
+    // The newest file in the backup directory is when the last backup completed.
+    // Deriving the schedule from it rather than from process uptime means it
+    // survives restarts without any extra persisted state, and self-heals if the
+    // directory is restored from elsewhere.
+    const lastBackupAt = () => backupFiles().reduce((latest, entry) => Math.max(latest, entry.modifiedAt), 0);
+
+    const backupDue = (now = Date.now()) => config.automaticBackups
+        && config.databasePath !== ':memory:'
+        && now - lastBackupAt() >= config.backupIntervalMs;
+
     const runBackup = async () => {
         if (!config.automaticBackups || config.databasePath === ':memory:') return null;
         roomService.runRetention();
@@ -294,15 +316,15 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
         const destination = path.join(config.backupDir, `youtube-karaoke-${stamp}.sqlite`);
         await db.backupTo(destination);
         const cutoff = Date.now() - config.backupRetentionMs;
-        for (const entry of fs.readdirSync(config.backupDir, { withFileTypes: true })) {
-            if (!entry.isFile() || !/^youtube-karaoke-.*\.sqlite$/.test(entry.name)) continue;
-            const filename = path.join(config.backupDir, entry.name);
-            if (fs.statSync(filename).mtimeMs < cutoff) fs.unlinkSync(filename);
+        for (const entry of backupFiles()) {
+            if (entry.filename !== destination && entry.modifiedAt < cutoff) fs.unlinkSync(entry.filename);
         }
         db.audit(null, 'backup_completed', 'maintenance', null, {});
         logger.info(`[INFO] SQLite backup completed: ${destination}`);
         return destination;
     };
+
+    const runBackupIfDue = async () => (backupDue() ? runBackup() : null);
 
     async function start(port = config.port) {
         if (started) return httpServer.address();
@@ -315,7 +337,16 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
         maintenanceTimer = setInterval(() => runMaintenance().catch((error) => logger.error(`[ERR] Maintenance failed: ${error.message}`)), config.maintenanceIntervalMs);
         maintenanceTimer.unref();
         if (config.automaticBackups) {
-            backupTimer = setInterval(() => runBackup().catch((error) => logger.error(`[ERR] Backup failed: ${error.message}`)), config.backupIntervalMs);
+            // A plain backupIntervalMs timer only ever fires on a process that
+            // stays up that long, so a host redeployed or restarted more often
+            // than the backup period never produced a backup at all. Catch up at
+            // startup, then poll often enough that the schedule cannot drift.
+            const failed = (error) => logger.error(`[ERR] Backup failed: ${error.stack || error.message}`);
+            await runBackupIfDue().catch(failed);
+            backupTimer = setInterval(
+                () => runBackupIfDue().catch(failed),
+                Math.min(config.backupIntervalMs, config.maintenanceIntervalMs)
+            );
             backupTimer.unref();
         }
         return httpServer.address();
@@ -334,7 +365,10 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
         db.close();
     }
 
-    return { app, httpServer, io, db, roomService, youtubeService, adminService, runBackup, runMaintenance, start, stop };
+    return {
+        app, httpServer, io, db, roomService, youtubeService, adminService,
+        backupDue, lastBackupAt, runBackup, runBackupIfDue, runMaintenance, start, stop,
+    };
 }
 
 module.exports = { buildControlUrl, createServer, numericQuery };

@@ -113,7 +113,9 @@ The default database is `data/youtube-karaoke.sqlite`. SQLite WAL mode, foreign 
 - Active YouTube metadata approaching the retention boundary is refreshed through the API or replaced with an unavailable marker.
 - A room creator can permanently delete an active room and its correlated stored data from Room Admin by confirming the full room ID; contact-based privacy requests remain available for other cases.
 
-Production enables daily backups by default in `backups/`; set `AUTO_BACKUPS=false` to use an external backup system. Application-managed backups older than 24 hours are removed after a successful replacement. External/manual backup systems must enforce equivalent data-age and deletion guarantees rather than adding another 30-day retention window. Operational commands:
+Production enables daily backups by default in `backups/`; set `AUTO_BACKUPS=false` to use an external backup system. Application-managed backups older than 24 hours are removed after a successful replacement. External/manual backup systems must enforce equivalent data-age and deletion guarantees rather than adding another 30-day retention window.
+
+Backups are scheduled by how long it has been since the last one, not by process uptime: the newest file in the backup directory is the reference point, the server takes an overdue backup during startup, and it re-checks periodically while running. A host that is redeployed or restarted more often than once a day therefore still produces daily backups, and a manual `npm run db:backup` counts toward the same schedule. Operational commands:
 
 ```bash
 npm run db:integrity

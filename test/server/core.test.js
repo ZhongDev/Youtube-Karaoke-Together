@@ -678,6 +678,59 @@ test('graceful shutdown flushes the latest playback checkpoint', async () => {
     fs.rmSync(directory, { recursive: true, force: true });
 });
 
+test('backups are driven by how long it has been, not by how long the process has been up', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ytkt-backup-'));
+    const backupDir = path.join(directory, 'backups');
+    const config = loadConfig({
+        nodeEnv: 'test',
+        databasePath: path.join(directory, 'rooms.sqlite'),
+        backupDir,
+        port: 0,
+        tokenPepper: 'backup-schedule-pepper',
+        automaticBackups: true,
+        maintenanceIntervalMs: 3_600_000,
+    }, quietLogger());
+    const copies = () => fs.existsSync(backupDir)
+        ? fs.readdirSync(backupDir).filter((name) => name.endsWith('.sqlite')).sort()
+        : [];
+    // Restarts are the point of this test, so every instance is tracked and shut
+    // down even when an assertion fails; a leaked listener would hang the run.
+    const boot = async () => {
+        const instance = createServer({ config, logger: quietLogger() });
+        runtimes.push(instance);
+        await instance.start(0);
+        return instance;
+    };
+
+    try {
+        // A host redeployed more often than the backup interval never keeps a
+        // 24-hour timer alive long enough to fire, so startup has to catch up.
+        await boot();
+        const afterFirstStart = copies();
+        assert.equal(afterFirstStart.length, 1, 'a host with no backup yet must take one at startup');
+        await runtimes.pop().stop();
+
+        // Restarting minutes later must not take another one.
+        const second = await boot();
+        assert.deepEqual(copies(), afterFirstStart, 'a recent backup must not be repeated on every restart');
+        assert.equal(second.backupDue(), false);
+        await runtimes.pop().stop();
+
+        // Once the newest copy ages past the interval another is taken, and the
+        // aged copy is rotated away.
+        const aged = new Date(Date.now() - config.backupIntervalMs - 60_000);
+        fs.utimesSync(path.join(backupDir, afterFirstStart[0]), aged, aged);
+        const third = await boot();
+        await runtimes.pop().stop();
+        const afterAging = copies();
+        assert.equal(afterAging.length, 1);
+        assert.notDeepEqual(afterAging, afterFirstStart, 'an overdue backup must produce a fresh copy');
+        assert.equal(third.backupDue(), false, 'the fresh copy resets the schedule');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('first owner requires a one-time bootstrap code and receives a revocable session', async () => {
     const config = loadConfig({ nodeEnv: 'test', databasePath: ':memory:', tokenPepper: 'admin-pepper' }, quietLogger());
     const db = new AppDatabase(':memory:', { logger: quietLogger() });
