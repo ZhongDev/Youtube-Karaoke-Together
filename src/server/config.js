@@ -1,5 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+// Shared with the client bundle. The server rejects room creation and controller
+// registration that assert a different version, so the two must never drift.
+const { privacyPolicyVersion } = require('../../policy.json');
 
 const DEFAULT_LIMITS = Object.freeze({
     maxRooms: 5000,
@@ -87,7 +90,7 @@ function loadConfig(overrides = {}, logger = console) {
         youtubeApiKey: overrides.youtubeApiKey ?? process.env.YOUTUBE_API_KEY ?? '',
         youtubeApiKeyAlias: overrides.youtubeApiKeyAlias || process.env.YOUTUBE_API_KEY_ALIAS || 'default',
         googleClientId: overrides.googleClientId ?? process.env.GOOGLE_CLIENT_ID ?? '',
-        currentPrivacyPolicyVersion: overrides.currentPrivacyPolicyVersion || '2026-07-21',
+        currentPrivacyPolicyVersion: overrides.currentPrivacyPolicyVersion || privacyPolicyVersion,
         tokenPepper,
         inactivityMs: Number(overrides.inactivityMs ?? process.env.ROOM_INACTIVITY_HOURS) > 0
             ? Number(overrides.inactivityMs ?? process.env.ROOM_INACTIVITY_HOURS) * (overrides.inactivityMs ? 1 : 60 * 60 * 1000)

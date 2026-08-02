@@ -924,7 +924,7 @@ const Room = () => {
                 {/* Thumbnail */}
                 <Box
                   component="img"
-                  src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
+                  src={video.thumbnailUrl || `https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
                   alt={decodeHtmlEntities(video.title)}
                   sx={{
                     width: 56,

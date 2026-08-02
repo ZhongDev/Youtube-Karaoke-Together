@@ -57,6 +57,18 @@ test('QR registration capabilities use a URL fragment that is not sent to HTTP/p
     assert.equal(new URL(url).search, '');
 });
 
+test('the privacy policy version has a single source shared with the client', () => {
+    const shared = require('../../policy.json');
+    assert.equal(loadConfig({ nodeEnv: 'test' }, quietLogger()).currentPrivacyPolicyVersion, shared.privacyPolicyVersion);
+
+    // The client bundles the same file. Re-hardcoding the literal on either side
+    // is silent until someone creates a room and gets a 428, so guard it here
+    // rather than relying on both being remembered during a policy bump.
+    const clientConfig = fs.readFileSync(path.join(__dirname, '..', '..', 'client', 'src', 'config.js'), 'utf8');
+    assert.match(clientConfig, /from ['"]\.\.\/\.\.\/policy\.json['"]/);
+    assert.doesNotMatch(clientConfig, /CURRENT_PRIVACY_POLICY_VERSION\s*=\s*['"]/);
+});
+
 test('CORS compares normalized origins exactly', async () => {
     const instance = await runtime({ publicFrontendOrigin: 'https://karaoke.example.com' });
     const url = `http://127.0.0.1:${instance.httpServer.address().port}/api/health`;
