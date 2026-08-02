@@ -551,6 +551,70 @@ test('a reorder that changes nothing is still persisted and broadcast', async ()
     socket.close();
 });
 
+function playbackRoom(pepper) {
+    const config = loadConfig({ nodeEnv: 'test', databasePath: ':memory:', tokenPepper: pepper }, quietLogger());
+    const db = new AppDatabase(':memory:', { logger: quietLogger() });
+    const counters = { saves: 0 };
+    const saveRoom = db.saveRoom.bind(db);
+    db.saveRoom = (room) => { counters.saves += 1; return saveRoom(room); };
+    const service = new RoomService({ db, config, logger: quietLogger() });
+    const created = service.createRoom();
+    const singer = service.registerController(created.room.id, created.registrationToken, 'Singer');
+    service.addVideos(created.room.id, singer.controllerKey, [{ id: 'aaaaaaaaaa1', title: 'Playing' }]);
+    return { config, db, service, created, counters };
+}
+
+test('a player repeating the same paused snapshot stops rewriting the room', () => {
+    const { db, service, created, counters } = playbackRoom('checkpoint-pepper');
+    const roomId = created.room.id;
+    const publish = (state, positionSec) => service.updatePlayback(roomId, created.playerKey, {
+        state, positionSec, durationSec: 120,
+    });
+
+    publish('playing', 5);
+    counters.saves = 0;
+    // Coming to rest is worth persisting exactly once.
+    publish('paused', 10);
+    assert.equal(counters.saves, 1);
+
+    // Pretend the checkpoint interval has elapsed, so only the unchanged-snapshot
+    // guard is left to stop the write.
+    service.lastPlaybackCheckpoint.get(roomId).at -= 60_000;
+    counters.saves = 0;
+    for (let tick = 0; tick < 20; tick += 1) publish('paused', 10);
+    assert.equal(counters.saves, 0, 'a paused room must not be rewritten once per snapshot');
+
+    // Resuming is new information again.
+    publish('playing', 10);
+    assert.equal(counters.saves, 1);
+
+    // So is the position actually advancing after the interval elapses.
+    service.lastPlaybackCheckpoint.get(roomId).at -= 60_000;
+    counters.saves = 0;
+    publish('playing', 25);
+    assert.equal(counters.saves, 1);
+    db.close();
+});
+
+test('only advancing playback keeps a room clear of the inactivity sweep', () => {
+    const { config, db, service, created, counters } = playbackRoom('inactivity-pepper');
+    const roomId = created.room.id;
+    const goStale = () => { created.room.lastActivityAt = Date.now() - config.inactivityMs - 1_000; };
+    const publish = (state, positionSec) => service.updatePlayback(roomId, created.playerKey, {
+        state, positionSec, durationSec: 120,
+    });
+
+    goStale();
+    publish('playing', 20);
+    assert.deepEqual(service.expireInactive(), [], 'active playback is room activity');
+
+    goStale();
+    publish('paused', 20);
+    assert.deepEqual(service.expireInactive(), [roomId], 'a paused tab left open must not hold the room open');
+    assert.ok(counters.saves > 0);
+    db.close();
+});
+
 test('active room state and hashed credentials survive a database restart', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ytkt-v3-test-'));
     const filename = path.join(directory, 'rooms.sqlite');

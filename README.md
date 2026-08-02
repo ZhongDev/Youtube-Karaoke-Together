@@ -103,7 +103,8 @@ This recovery action revokes that user’s sessions and creates an audit event; 
 
 The default database is `data/youtube-karaoke.sqlite`. SQLite WAL mode, foreign keys, schema migrations, hashed bearer credentials, transactional structural writes, and periodic playback checkpoints are enabled.
 
-- Active rooms close after 24 hours without authenticated room activity.
+- Active rooms close after 24 hours without authenticated room activity. A room player that is paused, ended, or idle is not activity, so a forgotten browser tab no longer holds a room open indefinitely.
+- Playback checkpoints are written when playback changes state or its position advances, not on every snapshot the room player publishes.
 - Active room state is restored after restart without advancing playback by server downtime.
 - Playback volume is stored as room state, survives queue advances and restarts, and is reapplied whenever the player loads a video.
 - On closure, controller identity/display-name rows and registration credentials are deleted or revoked.

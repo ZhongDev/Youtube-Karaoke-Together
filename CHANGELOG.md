@@ -35,6 +35,8 @@ All notable changes to this project will be documented in this file.
 - Round-robin now hands the rotation to the departing controller's predecessor when the last served controller leaves the room, instead of resetting it
 - Queue reorders that resolve to no change are now persisted and broadcast, so a controller applying reorders optimistically cannot keep a diverged queue
 - Queue items whose controller record is gone are kept out of the persisted round-robin participant list and can no longer be dropped from the queue
+- Stopped room players rewriting the whole room once per second while paused or ended; playback is now checkpointed when its state changes or its position advances
+- Paused, ended, and idle room players no longer count as room activity, so a forgotten browser tab can no longer hold a room open past the inactivity window
 
 ### Documentation
 

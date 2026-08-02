@@ -4,6 +4,10 @@ const { AppError, cleanText, generateToken, isIdentifier, tokenDigest } = requir
 const PLAYBACK_STATES = new Set(['unstarted', 'ended', 'playing', 'paused', 'buffering', 'cued']);
 const PLAYBACK_COMMANDS = new Set(['play', 'pause', 'seek', 'volume']);
 const MAX_SEEK_SECONDS = 24 * 60 * 60;
+// Playback states in which the room is actually progressing through a video.
+// Room players publish a snapshot every second regardless of state, so these are
+// what separate a room in use from a tab someone left open.
+const ADVANCING_PLAYBACK_STATES = new Set(['playing', 'buffering']);
 // Queue items whose controller record has gone share one rotation slot. Held
 // outside the persisted participant ring so it cannot accumulate there.
 const ORPHANED_PARTICIPANT = Symbol('orphaned participant');
@@ -421,14 +425,32 @@ class RoomService {
         room.playback.videoId = room.currentVideo?.id || null;
         room.playback.queueId = room.currentVideo?.queueId || null;
         room.playback.updatedAt = Date.now();
-        room.lastActivityAt = Date.now();
-        const lastCheckpoint = this.lastPlaybackCheckpoint.get(room.id) || 0;
-        if (Date.now() - lastCheckpoint >= this.config.playbackCheckpointMs || update.state === 'paused' || update.state === 'ended') {
+        // Only advancing playback renews the room. Players publish a snapshot
+        // every second whatever their state, so counting every one of them let a
+        // paused or ended tab hold a room open past the inactivity window
+        // indefinitely.
+        if (ADVANCING_PLAYBACK_STATES.has(room.playback.state)) room.lastActivityAt = Date.now();
+        if (this.shouldCheckpointPlayback(room)) {
             room.version += 1;
             this.db.saveRoom(room);
-            this.lastPlaybackCheckpoint.set(room.id, Date.now());
+            this.lastPlaybackCheckpoint.set(room.id, {
+                at: Date.now(),
+                state: room.playback.state,
+                positionSec: room.playback.positionSec,
+            });
         }
         return room.playback;
+    }
+
+    // A checkpoint costs a full room write: the room row plus every controller and
+    // queue item. Spend it only when the snapshot carries something new, so a
+    // paused or ended player repeating itself once a second writes nothing.
+    shouldCheckpointPlayback(room) {
+        const checkpoint = this.lastPlaybackCheckpoint.get(room.id);
+        if (!checkpoint) return true;
+        if (checkpoint.state !== room.playback.state) return true;
+        if (Date.now() - checkpoint.at < this.config.playbackCheckpointMs) return false;
+        return Math.abs((room.playback.positionSec || 0) - (checkpoint.positionSec || 0)) >= 1;
     }
 
     controlPlayback(roomId, token, command) {
