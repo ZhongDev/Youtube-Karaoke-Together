@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- Keyed the per-minute playlist and video addition budgets on the registered controller and moved them out of the socket connection, so reconnecting no longer resets the allowance that protects the shared YouTube API quota
 - Updated `brace-expansion` to resolve a high-severity denial-of-service advisory (GHSA-mh99-v99m-4gvg)
 - Updated `postcss` to resolve a high-severity source-map path-traversal advisory (GHSA-r28c-9q8g-f849)
 - Moved to `react-router` 8 to resolve a high-severity advisory (GHSA-qwww-vcr4-c8h2) that has no fixed release on the `react-router-dom` 7 line
