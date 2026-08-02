@@ -213,7 +213,9 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
         on('reorder-queue', ({ roomId, orderedQueueIds, controllerKey }) => {
             const result = roomService.reorderQueue(roomId, controllerKey, orderedQueueIds);
             const room = roomService.requireRoom(roomId);
-            if (result.changed) io.to(room.id).emit('queue-updated', room.queue);
+            // Always broadcast: clients apply reorders optimistically without the
+            // round-robin rebuild, so even a no-op has to reconcile their view.
+            io.to(room.id).emit('queue-updated', room.queue);
             return { changed: result.changed, scope: result.scope };
         });
 
