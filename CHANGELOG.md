@@ -29,6 +29,8 @@ All notable changes to this project will be documented in this file.
 
 - Released paused-checkpoint enforcement after restoration so the room player’s native controls can resume playback normally
 - Enlarged controller queue reorder handles to a 48×48-pixel touch target for more reliable mobile dragging
+- Stopped the controller Settings display name from clearing itself after a successful save when “Remember me” was off
+- Controller screens now show the display name the room actually assigned, including the collision suffix added when the chosen name is already taken
 
 ### Documentation
 

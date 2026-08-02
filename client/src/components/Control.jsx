@@ -14,6 +14,7 @@ import SearchTab from "../features/controller/SearchTab";
 import ControlsTab from "../features/controller/ControlsTab";
 import ControllerNavigation from "../features/controller/ControllerNavigation";
 import ControllerRegistrationDialog from "../features/controller/ControllerRegistrationDialog";
+import { subscribeToUsername } from "../features/controller/usernameSync";
 import {
   CURRENT_PRIVACY_POLICY_VERSION,
   getStoredControllerKey,
@@ -235,7 +236,9 @@ const Control = () => {
     }
   }, [serverError, clearServerError, roomId]);
 
-  // Listen for username updates from Settings
+  // Settings announces renames in this window with the name the server actually
+  // assigned. The storage event only fires for other tabs and carries the
+  // normalized preference, which omits any room collision suffix.
   useEffect(() => {
     const handleStorageChange = (e) => {
       if (e.key === STORAGE_KEYS.USERNAME) {
@@ -244,7 +247,11 @@ const Control = () => {
     };
 
     window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
+    const unsubscribe = subscribeToUsername(setUsername);
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      unsubscribe();
+    };
   }, []);
 
   // Validate username (no [ or ] characters)
