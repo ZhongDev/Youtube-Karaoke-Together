@@ -173,6 +173,7 @@ The controller Controls tab can seek with an interactive timeline or −15/+15 s
 - Registration links are short-lived; controller and administrator sessions are revocable.
 - Administrator cookies are `HttpOnly`, `Secure` in production, and `SameSite=Lax`; mutations also require CSRF tokens and RBAC.
 - Search, playlist/video additions, room creation, login, and realtime events are bounded or rate limited.
+- Playlist and video additions spend the shared YouTube API quota, so their per-minute budgets are keyed on the registered controller and held server-side. Reconnecting does not return a fresh allowance. The general realtime event ceiling stays per-connection, since it guards a single socket against flooding.
 - The Privacy Policy is versioned `2026-07-21`; room creation and controller registration assert that version, and the server records only a bounded anonymous acceptance hash.
 
 The implementation is designed to follow the current YouTube API Developer Policies, but deployment configuration and applicable local law remain operator responsibilities. Important routes: `/privacy-policy`, `/terms-of-service`, and `/contact`.

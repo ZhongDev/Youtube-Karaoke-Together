@@ -6,7 +6,7 @@ const { afterEach, test } = require('node:test');
 const { io: createClient } = require('socket.io-client');
 const { version } = require('../../package.json');
 const { AdminService } = require('../../src/server/adminService');
-const { loadConfig } = require('../../src/server/config');
+const { DEFAULT_LIMITS, loadConfig } = require('../../src/server/config');
 const { buildControlUrl, createServer } = require('../../src/server/createServer');
 const { AppDatabase } = require('../../src/server/database');
 const { RoomService } = require('../../src/server/roomService');
@@ -180,6 +180,57 @@ test('malformed socket payloads return structured errors without terminating the
     const health = await fetch(`http://127.0.0.1:${port}/api/health`);
     assert.equal(health.status, 200);
     socket.close();
+});
+
+test('the YouTube add budget follows the controller, not the socket', async () => {
+    const instance = await runtime({
+        tokenPepper: 'quota-budget-pepper',
+        limits: { ...DEFAULT_LIMITS, maxVideoAddsPerMinute: 2 },
+    });
+    const created = instance.roomService.createRoom();
+    const singer = instance.roomService.registerController(created.room.id, created.registrationToken, 'Singer');
+    const port = instance.httpServer.address().port;
+
+    const connect = async () => {
+        const socket = createClient(`http://127.0.0.1:${port}`, { transports: ['websocket'], path: '/socket.io/' });
+        await new Promise((resolve, reject) => {
+            socket.once('connect', resolve);
+            socket.once('connect_error', reject);
+        });
+        await new Promise((resolve, reject) => {
+            socket.timeout(1000).emit('auth-controller', {
+                roomId: created.room.id, controllerKey: singer.controllerKey,
+            }, (error, response) => error ? reject(error) : resolve(response));
+        });
+        return socket;
+    };
+    const addVideo = (socket) => new Promise((resolve, reject) => {
+        socket.timeout(2000).emit('add-to-queue', {
+            roomId: created.room.id, controllerKey: singer.controllerKey, video: { id: 'abcdefghijk' },
+        }, (error, response) => error ? reject(error) : resolve(response));
+    });
+
+    // Clients are closed even when an assertion fails: socket.io-client keeps
+    // retrying a dropped connection, which would hold the test run open.
+    const sockets = [];
+    try {
+        const first = await connect();
+        sockets.push(first);
+        // The stubbed YouTube API returns no items, so an add that is within
+        // budget fails at the lookup rather than at the limiter.
+        assert.equal((await addVideo(first)).error.code, 'video_unavailable');
+        assert.equal((await addVideo(first)).error.code, 'video_unavailable');
+        assert.equal((await addVideo(first)).error.code, 'quota_action_rate_limited');
+        first.close();
+
+        // Reconnecting as the same controller must not hand back a fresh
+        // allowance.
+        const second = await connect();
+        sockets.push(second);
+        assert.equal((await addVideo(second)).error.code, 'quota_action_rate_limited');
+    } finally {
+        for (const socket of sockets) socket.close();
+    }
 });
 
 test('queue mutations use stable IDs and duplicate advances are idempotent', () => {

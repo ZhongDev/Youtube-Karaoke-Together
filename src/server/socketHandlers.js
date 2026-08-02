@@ -1,3 +1,4 @@
+const { FixedWindowLimiter } = require('./rateLimiter');
 const { AppError, asObject, isIdentifier } = require('./security');
 
 function errorPayload(event, error) {
@@ -9,10 +10,15 @@ function errorPayload(event, error) {
 }
 
 function registerSocketHandlers(io, { roomService, youtubeService, config, logger = console }) {
+    // Budgets for the calls that spend the shared YouTube API quota are held
+    // across connections and keyed on the registered controller. Kept in the
+    // socket closure they reset on every reconnect, so a client could refresh its
+    // allowance at will simply by dropping and reopening the socket.
+    const quotaLimiter = new FixedWindowLimiter();
+
     io.on('connection', (socket) => {
         let membership = null;
         const rate = { startedAt: Date.now(), count: 0 };
-        const mutationRates = new Map();
 
         const checkRate = () => {
             const now = Date.now();
@@ -23,13 +29,10 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
             }
         };
 
-        const checkMutationRate = (name, limit) => {
-            const now = Date.now();
-            const bucket = mutationRates.get(name) || { startedAt: now, count: 0 };
-            if (now - bucket.startedAt >= 60_000) { bucket.startedAt = now; bucket.count = 0; }
-            bucket.count += 1;
-            mutationRates.set(name, bucket);
-            if (bucket.count > limit) throw new AppError('quota_action_rate_limited', 'Too many YouTube additions; wait before trying again', 429);
+        const checkMutationRate = (name, limit, controllerId) => {
+            if (!quotaLimiter.consume(`${controllerId}:${name}`, limit)) {
+                throw new AppError('quota_action_rate_limited', 'Too many YouTube additions; wait before trying again', 429);
+            }
         };
 
         const leaveMembership = () => {
@@ -152,18 +155,18 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
 
         on('add-to-queue', async ({ roomId, video, controllerKey, addToTop }) => {
             const room = roomService.requireRoom(roomId);
-            roomService.controller(room, controllerKey);
+            const controller = roomService.controller(room, controllerKey);
             if (!video || typeof video !== 'object') throw new AppError('invalid_video', 'Invalid video data');
             if (addToTop !== undefined && typeof addToTop !== 'boolean') throw new AppError('invalid_queue_priority', 'Queue priority must be a boolean');
             const capacity = roomService.remainingQueueCapacity(room);
             if (capacity <= 0) throw new AppError('queue_full', 'Queue is at maximum capacity', 409);
             let videos;
             if (video.isPlaylist) {
-                checkMutationRate('playlist-add', config.limits.maxPlaylistAddsPerMinute);
+                checkMutationRate('playlist-add', config.limits.maxPlaylistAddsPerMinute, controller.id);
                 videos = await youtubeService.expandPlaylist(video.id, room.id, Math.min(capacity, config.limits.maxPlaylistItemsPerAdd));
                 if (videos.length === 0) throw new AppError('empty_playlist', 'No playable public videos were found in this playlist', 404);
             } else {
-                checkMutationRate('video-add', config.limits.maxVideoAddsPerMinute);
+                checkMutationRate('video-add', config.limits.maxVideoAddsPerMinute, controller.id);
                 videos = await youtubeService.lookupVideos([video.id], room.id);
                 if (videos.length === 0) throw new AppError('video_unavailable', 'This video is unavailable or not public', 404);
             }
