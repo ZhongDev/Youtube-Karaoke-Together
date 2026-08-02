@@ -2,7 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [3.3.0] - 2026-08-02 - Reliability and Maintenance
+
+### Changed
+
+- Replaced `react-router-dom` 7 with `react-router` 8, which now provides the DOM router exports directly
+- Raised the minimum supported Node.js version to 22.22.0, as required by React Router 8
+- Moved the current Privacy Policy version into `policy.json`, which the server and the client bundle both read, so a version bump can no longer land on one side only
+- Bumped the root and client application versions to 3.3.0
+
+### Security
+
+- Keyed the per-minute playlist and video addition budgets on the registered controller and moved them out of the socket connection, so reconnecting no longer resets the allowance that protects the shared YouTube API quota
+- Updated `brace-expansion` to resolve a high-severity denial-of-service advisory (GHSA-mh99-v99m-4gvg)
+- Updated `postcss` to resolve a high-severity source-map path-traversal advisory (GHSA-r28c-9q8g-f849)
+- Moved to `react-router` 8 to resolve a high-severity advisory (GHSA-qwww-vcr4-c8h2) that has no fixed release on the `react-router-dom` 7 line
+
+### Fixed
+
+- Fixed round-robin skipping singers: the rotation restarted at the earliest-registered controller whenever the current singer had no pending videos of their own, pushing whoever's turn it was back a full cycle
+- Round-robin now hands the rotation to the departing controller's predecessor when the last served controller leaves the room, instead of resetting it
+- Queue reorders that resolve to no change are now persisted and broadcast, so a controller applying reorders optimistically cannot keep a diverged queue
+- Queue items whose controller record is gone are kept out of the persisted round-robin participant list and can no longer be dropped from the queue
+- Stopped room players rewriting the whole room once per second while paused or ended; playback is now checkpointed when its state changes or its position advances
+- Paused, ended, and idle room players no longer count as room activity, so a forgotten browser tab can no longer hold a room open past the inactivity window
+- Fixed automatic backups never running on a host that restarts more often than the backup interval: the schedule now follows the time since the last backup instead of process uptime, and an overdue backup is taken during startup
+- Stopped the controller Settings display name from clearing itself after a successful save when “Remember me” was off
+- Controller screens now show the display name the room actually assigned, including the collision suffix added when the chosen name is already taken
+- Queue lists now show the stored, periodically refreshed YouTube thumbnail instead of always rebuilding a URL from the video ID
+
+### Documentation
+
+- Recorded the Node.js 22.22.0 minimum in the README requirements
+- Corrected Privacy Policy section 7, which implied the Made for Kids designation configures playback; the designation is recorded as video metadata and playback protections apply uniformly to every video. No data collection changed, so the policy version is unchanged
+- Aligned the documented audit commands with the ones CI runs, and added the hooks and room feature directories to the README architecture map
+
+## [3.2.0] - Playback Controls
 
 ### Added
 
@@ -16,35 +51,16 @@ All notable changes to this project will be documented in this file.
 
 - Room players now restore paused playback intent and saved volume instead of always forcing resumed videos to play
 - Bumped the root and client application versions to 3.2.0
-- Replaced `react-router-dom` 7 with `react-router` 8, which now provides the DOM router exports directly
-- Raised the minimum supported Node.js version to 22.22.0, as required by React Router 8
-
-### Security
-
-- Keyed the per-minute playlist and video addition budgets on the registered controller and moved them out of the socket connection, so reconnecting no longer resets the allowance that protects the shared YouTube API quota
-- Updated `brace-expansion` to resolve a high-severity denial-of-service advisory (GHSA-mh99-v99m-4gvg)
-- Updated `postcss` to resolve a high-severity source-map path-traversal advisory (GHSA-r28c-9q8g-f849)
-- Moved to `react-router` 8 to resolve a high-severity advisory (GHSA-qwww-vcr4-c8h2) that has no fixed release on the `react-router-dom` 7 line
 
 ### Fixed
 
 - Released paused-checkpoint enforcement after restoration so the room player’s native controls can resume playback normally
 - Enlarged controller queue reorder handles to a 48×48-pixel touch target for more reliable mobile dragging
-- Stopped the controller Settings display name from clearing itself after a successful save when “Remember me” was off
-- Controller screens now show the display name the room actually assigned, including the collision suffix added when the chosen name is already taken
-- Fixed round-robin skipping singers: the rotation restarted at the earliest-registered controller whenever the current singer had no pending videos of their own, pushing whoever's turn it was back a full cycle
-- Round-robin now hands the rotation to the departing controller's predecessor when the last served controller leaves the room, instead of resetting it
-- Queue reorders that resolve to no change are now persisted and broadcast, so a controller applying reorders optimistically cannot keep a diverged queue
-- Queue items whose controller record is gone are kept out of the persisted round-robin participant list and can no longer be dropped from the queue
-- Stopped room players rewriting the whole room once per second while paused or ended; playback is now checkpointed when its state changes or its position advances
-- Paused, ended, and idle room players no longer count as room activity, so a forgotten browser tab can no longer hold a room open past the inactivity window
-- Fixed automatic backups never running on a host that restarts more often than the backup interval: the schedule now follows the time since the last backup instead of process uptime, and an overdue backup is taken during startup
 
 ### Documentation
 
 - Updated the root and client READMEs with controller playback controls and persistent-volume behavior
 - Documented a simple PM2 and Nginx production setup, verification flow, reboot persistence, and update procedure
-- Recorded the Node.js 22.22.0 minimum in the README requirements
 
 ## [3.1.0] - Queue Ordering
 
