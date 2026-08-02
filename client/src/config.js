@@ -5,6 +5,8 @@
  * In development: Uses Vite env vars for explicit backend configuration
  */
 
+import privacyPolicy from '../../policy.json';
+
 // Check if we're in development mode
 const isDev = import.meta.env.VITE_DEV === 'true' || import.meta.env.DEV;
 
@@ -86,7 +88,11 @@ export const STORAGE_KEYS = {
     LYRICS_ROMAJI_ENABLED: 'ytkt_lyricsRomajiEnabled',
 };
 
-export const CURRENT_PRIVACY_POLICY_VERSION = '2026-07-21';
+// Read from the repository-root policy.json that the server also loads, so a
+// version bump cannot land on one side only. Asserting a version the server does
+// not recognise makes room creation return 428 and blocks controller
+// registration, which is silent until someone tries to create a room.
+export const CURRENT_PRIVACY_POLICY_VERSION = privacyPolicy.privacyPolicyVersion;
 
 /**
  * Decode HTML entity references in a string. Safe for use on values like

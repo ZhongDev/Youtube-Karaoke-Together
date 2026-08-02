@@ -113,7 +113,7 @@ const VideoCard = React.memo(function VideoCard({
       {/* Thumbnail */}
       <Box
         component="img"
-        src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
+        src={video.thumbnailUrl || `https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
         alt={displayTitle}
         sx={{
           width: 100,

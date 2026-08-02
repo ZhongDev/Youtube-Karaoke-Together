@@ -96,7 +96,7 @@ const PrivacyPolicy = () => {
         </Section>
 
         <Section title="7. Children and international use">
-          <Typography color="text.secondary" paragraph>The service is not directed to children under 13. YouTube content may have its own age or regional restrictions. We look up the Made for Kids designation for selected videos and configure playback in accordance with applicable YouTube and privacy requirements.</Typography>
+          <Typography color="text.secondary" paragraph>The service is not directed to children under 13. YouTube content may have its own age or regional restrictions. We record the Made for Kids designation returned for a selected video as part of the video metadata described in section 1. Playback protections, including the privacy-enhanced YouTube embed domain, are applied uniformly to every video rather than varying by that designation.</Typography>
           <Typography color="text.secondary">Information may be processed where the service and its providers operate. Users are responsible for ensuring their use complies with applicable local law.</Typography>
         </Section>
 

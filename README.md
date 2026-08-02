@@ -56,7 +56,7 @@ VITE_GOOGLE_CLIENT_ID=replace_me.apps.googleusercontent.com
 
 `TOKEN_PEPPER` is mandatory and must contain at least 32 characters in production. Preserve it across restarts or persisted room/controller credentials will no longer validate.
 
-See [env.example](env.example) and [server-limits.json](server-limits.json) for all runtime and capacity settings.
+See [env.example](env.example) and [server-limits.json](server-limits.json) for all runtime and capacity settings. The current Privacy Policy version lives in [policy.json](policy.json), which both the server and the client bundle read so a bump cannot land on one side only.
 
 ## Run and verify
 
@@ -71,11 +71,11 @@ npm run check
 npm test
 npm run test:client
 npm --prefix client run build
-npm audit --omit=dev
-npm --prefix client audit --omit=dev
+npm audit --audit-level=high
+npm --prefix client audit --audit-level=high
 ```
 
-The same install, test, build, and high-severity audit gate runs in GitHub Actions on Node 22.
+GitHub Actions runs exactly these install, test, build, and high-severity audit steps on Node 22.
 
 The development UI runs at `http://localhost:3000`; the API and Socket.IO server default to `http://localhost:8080`.
 
@@ -154,7 +154,9 @@ src/server/
   socketHandlers.js          validated realtime transport boundary
 client/src/
   components/                public route/page composition
-  features/controller/       search and playback-control features
+  hooks/                     shared Socket.IO client lifecycle
+  features/controller/       search, playback controls, display-name sync
+  features/room/             room player identity and playback adapters
   features/admin/            login, dashboard panels, API client
   features/consent/          versioned local consent migration
   pages/                     lazy-loaded route shells
