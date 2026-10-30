@@ -31,6 +31,22 @@ All notable changes to this project will be documented in this file.
 ### Security
 
 - Lyrics documents are served only to authenticated room players and controllers of the room playing the song; lyrics edits require the `admin` role and a CSRF token and are audited
+- Updated server dependencies within their existing version ranges to resolve the high and critical `npm audit` advisories:
+  - `proxy-addr` 2.0.8: IP spoofing through IPv4-mapped IPv6 trust subnets, critical (GHSA-jqcg-44mw-7w3h)
+  - `body-parser` 1.20.9 (GHSA-27r3-jxmh-p828)
+  - `engine.io` 6.6.11 (GHSA-2gc4-cqfq-p2gv)
+  - `socket.io-parser` 4.2.7 (GHSA-2m8v-j782-fhvr)
+  - `ip-address` 10.7.5 via `express-rate-limit` (GHSA-mwp4-54f8-5fhr and seven related advisories)
+  - `brace-expansion` (GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p)
+  - development-only `shell-quote` 1.12.0 via `concurrently` 9.2.5: command injection, critical (GHSA-pqg4-j6r4-53mv)
+  - `express` 4.22.3, which moves `qs` to 6.16.2 for three moderate advisories
+- Updated client dependencies within their existing version ranges:
+  - `vite` 7.3.7 (GHSA-587h-7wmj-h5pm and four lower-severity advisories)
+  - `browserslist` 4.29.5 (GHSA-c83g-rgw3-j3cx, GHSA-73wf-gq98-2v4g)
+  - `nanoid` 3.3.20 (GHSA-2v37-7h3g-55p8)
+  - `socket.io-parser` 4.2.7 (GHSA-2m8v-j782-fhvr)
+  - `source-map-js` 1.2.2 (GHSA-68fv-2mgg-jv7q)
+  - `vitest` 4.1.12 for moderate test-tooling advisories
 - Controller lyrics-search corrections require the controller's key and the current queue item. They are limited per controller by `maxLyricsSearchesPerMinute` and recorded in the security audit log. A correction that finds nothing changes nothing
 
 ### Documentation
