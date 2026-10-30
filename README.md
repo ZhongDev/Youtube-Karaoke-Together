@@ -8,6 +8,8 @@ YouTube Karaoke Together is a collaborative YouTube queue with a shared room/pla
 - QR-based mobile controllers with optional round-robin ordering
 - Confirmed “add to top” actions from controller search and drag/keyboard reordering on the controller queue page
 - Controller timeline seeking, exact timestamp entry, −15/+15 second jumps, play/pause, and persistent room volume
+- Opt-in, Joysound-style time-synced lyrics over the room video, with romaji, Korean romanization, or pinyin over Japanese, Korean, and Chinese lyrics, and a controller Lyrics tab that mirrors the room screen
+- Server-side lyrics lookup from LRCLIB and NetEase Cloud Music with a SQLite cache, plus administrator-provided lyrics, default sources, and default delays
 - Server-validated video and playlist additions (up to 50 playable playlist entries per add)
 - Unfiltered YouTube search (`safeSearch=none`); YouTube availability, age, region, and embed restrictions still apply
 - Stable queue-item IDs and duplicate-safe skip/auto-advance
@@ -23,6 +25,8 @@ YouTube Karaoke Together is a collaborative YouTube queue with a shared room/pla
 - A YouTube Data API v3 key
 - A Google OAuth web client ID if the administrator dashboard is enabled
 - One writable application instance for the SQLite deployment
+- Outbound HTTPS from the server to `lrclib.net` and `music.163.com` for lyrics lookups (optional; see `LYRICS_PROVIDERS`)
+- About 400 MB of spare memory while Japanese reading aids are computed. The dictionary runs in a short-lived child process, described under [Lyrics](#lyrics)
 
 ## Install and configure
 
@@ -55,6 +59,8 @@ VITE_GOOGLE_CLIENT_ID=replace_me.apps.googleusercontent.com
 ```
 
 `TOKEN_PEPPER` is mandatory and must contain at least 32 characters in production. Preserve it across restarts or persisted room/controller credentials will no longer validate.
+
+Lyrics lookups need no key. `LYRICS_PROVIDERS` chooses the providers the server queries (`lrclib,netease` by default); set it to `none` to show only administrator-provided lyrics.
 
 See [env.example](env.example) and [server-limits.json](server-limits.json) for all runtime and capacity settings. The current Privacy Policy version lives in [policy.json](policy.json), which both the server and the client bundle read so a bump cannot land on one side only.
 
@@ -91,7 +97,7 @@ The development UI runs at `http://localhost:3000`; the API and Socket.IO server
 
 4. Open `/admin/bootstrap`, enter the code, and complete Google sign-in. Subsequent administrators must use an owner-created invitation from the dashboard.
 
-Roles are `owner`, `admin`, and `viewer`. Administrators and owners can align the locally displayed YouTube quota limits with Google-approved increases; viewers have read-only access. Owners additionally manage invitations, roles, account status, and sessions; the last enabled owner cannot be demoted or disabled. If all owner access is accidentally lost, an operator with server/database access can recover an existing linked identity:
+Roles are `owner`, `admin`, and `viewer`. Administrators and owners can align the locally displayed YouTube quota limits with Google-approved increases and manage the lyrics cache; viewers have read-only access. Owners additionally manage invitations, roles, account status, and sessions; the last enabled owner cannot be demoted or disabled. If all owner access is accidentally lost, an operator with server/database access can recover an existing linked identity:
 
 ```bash
 npm run admin:recover -- owner@example.com
@@ -112,6 +118,9 @@ The default database is `data/youtube-karaoke.sqlite`. SQLite WAL mode, foreign 
 - Search queries, raw tokens, IP-address histories, user-agent histories, and controller names are not retained in closed-room history.
 - Active YouTube metadata approaching the retention boundary is refreshed through the API or replaced with an unavailable marker.
 - A room creator can permanently delete an active room and its correlated stored data from Room Admin by confirming the full room ID; contact-based privacy requests remain available for other cases.
+- The lyrics cache is keyed by YouTube video ID and holds a snapshot of the video's public title, channel, and duration. Maintenance refreshes that snapshot through the YouTube Data API after 21 days and deletes entries whose video is gone. An entry that cannot be refreshed within 28 days (for example, during a long API outage) is deleted together with its lyrics and reading aids.
+  - **Curated songs.** Songs an administrator added, edited, refetched, or pasted lyrics for are never deleted by retention. When their snapshot cannot be kept, only the title, channel, and duration are removed; the video ID, administrator settings, search terms, and lyrics stay. The snapshot returns the next time a room plays the video. This mirrors how room queues replace expired YouTube metadata with an unavailable marker. The cache stores no room, controller, or personal identifier, so deleting a room does not touch it.
+- Room lyrics settings, per-video source/offset adjustments, and each controller's lyrics preference are room state. Controller preferences are deleted with the controller records when a room closes, and adjustments are cleared.
 
 Production enables daily backups by default in `backups/`; set `AUTO_BACKUPS=false` to use an external backup system. Application-managed backups older than 24 hours are removed after a successful replacement. External/manual backup systems must enforce equivalent data-age and deletion guarantees rather than adding another 30-day retention window.
 
@@ -131,7 +140,7 @@ SQLite assumes a single writable Node process. The repository/service boundaries
 Every YouTube request is routed through the metered service and records method, quota bucket, configured cost, result, and latency—never the API key itself. The v3 catalog follows the current separate-bucket model:
 
 - `search.list`: one call from the default 100-search-calls/day bucket
-- `videos.list` and `playlistItems.list`: one unit per request from the default 10,000 general-units/day bucket
+- `videos.list` and `playlistItems.list`: one unit per request from the default 10,000 general-units/day bucket. Video lookups also request `contentDetails` for the track length lyrics providers use; that part costs nothing extra. Refreshing the lyrics cache spends one `videos.list` unit per 50 cached songs, at most 10 requests per hourly maintenance run
 - `videos.insert`: separately modeled as one call from the default 100-video-uploads/day bucket, though this application does not upload videos
 - Every page and failed/invalid request is counted
 - Quota days use midnight Pacific Time
@@ -139,6 +148,31 @@ Every YouTube request is routed through the metered service and records method, 
 This catalog reflects Google's granular quota model documented by the [official YouTube Data API quota calculator](https://developers.google.com/youtube/v3/determine_quota_cost). Dashboard values are local estimates. The Google Cloud Console remains authoritative, particularly for custom quota allocations or future Google policy changes.
 
 Administrators and owners can edit the three daily bucket limits from the API Usage tab when Google grants a quota increase. Overrides are validated, audited, and stored in SQLite across restarts. They affect dashboard utilization percentages only: they neither modify per-method costs nor request quota from or enforce quota at Google. “Restore defaults” removes all local overrides.
+
+## Lyrics
+
+Lyrics are off until a controller turns on **Lyrics on the room screen** in its Controls tab. **Only for singers who turn lyrics on** narrows that to songs queued by controllers that switched on **Show lyrics on the room screen for songs I add** in their Lyrics tab.
+
+- **Room display.** Two lanes in the lower part of the video, Joysound style: the first lane is anchored left and the second right, each line fades in before it is sung, is wiped from white to red as it is sung, then fades out. Word-synced (enhanced) LRC drives a word-accurate wipe. Over Japanese, Korean, and Chinese lyrics the room shows romaji, Revised Romanization, or pinyin above each word by default; Room Admin can switch that to furigana for Japanese or turn it off. The overlay is `aria-hidden` and passes every click and touch through to the YouTube player. A rendering failure is contained so it can never interrupt playback.
+- **Controller Lyrics tab.** Mirrors the room screen line by line on a phone, keeping the sung line highlighted and centred, or as a plain scrolling list with time sync off. Controllers choose the source (LRCLIB, NetEase, or YKT for administrator lyrics, each only when it has lyrics for the song) and the offset, with −500/−100/+100/+500 ms buttons or an exact whole number. Positive offsets delay the lyrics. Source and offset apply to the whole room for that video and are remembered if it is queued again.
+- **Lyrics match.** The Lyrics tab's **Match** button opens a screen with the YouTube title (selectable, with a copy button) next to what each source matched: track, artist, length (flagged when it is more than 5 seconds off the video's), and confidence, plus the searches that were run. If the match is wrong, any controller can search again with a corrected artist and title:
+  - the lyrics are replaced only when the new search finds something, so a typo cannot erase them;
+  - a correction is kept for the video and used in every room that plays it;
+  - each controller gets 3 corrections a minute (`maxLyricsSearchesPerMinute` in [server-limits.json](server-limits.json));
+  - every correction is recorded in the security audit log.
+- **Lookup and cache.** The server parses the video title (including `Artist「Title」`, `Artist【Title】`, `Artist《Title》`, and mixed-script names) together with the channel name, and searches both providers, using the Data API track length to pick the right recording.
+  - **Channel as artist.** How much the channel counts as the artist depends on what kind of channel it is:
+    - auto-generated `Artist - Topic` channels are taken as the artist outright;
+    - VEVO (`ArianaGrandeVevo` becomes "Ariana Grande") and "Official" channels are nearly as trusted;
+    - for other channels, the channel is tried first when the title is just the song, and late when the title already names a different artist (re-upload and lyric channels);
+    - labels, broadcasters, and karaoke or live-session series (HYBE LABELS, THE FIRST TAKE) are never treated as the artist, and their names are removed from the title.
+  - **Matching.** A provider's title must resemble the song: artist and length agreeing cannot make a differently titled song (a cover, a remix, the same band's other song) a match. Traditional and Simplified Chinese are compared by their reading, and titles in different scripts (a romanized title against the Japanese one) are left to artist and length.
+  - **Caching and retries.** Every hit is cached per source, and concurrent requests share one lookup. Misses are retried after a week. Failures are retried after 15 minutes, or after 2 minutes once the song is playing. A busy (503) LRCLIB search is retried once.
+  - **When lookups start.** A lookup starts when the room screen is to show a song's lyrics or when a controller opens its Lyrics tab, which works even while the room screen has lyrics off.
+  - **Prefetch.** The next five queued songs are looked up ahead of time whenever the room will show their lyrics, or someone in the room has read lyrics on the Lyrics tab in the last 30 minutes. Their reading aid (romaji, romanization, or pinyin) is prepared too, so lyrics appear as soon as each song starts. A song that starts playing jumps ahead of pending prefetches.
+- **Reading aids.** Korean romanization is algorithmic and Chinese pinyin comes from `pinyin-pro`. Japanese needs the kuromoji dictionary, which occupies roughly 350 MB while loaded, so it runs in a child process that starts on demand and exits after two minutes idle; only ending the process returns that memory. Readings are stored with the lyrics, so each song is analysed once.
+- **Timing across screens.** Every client estimates the server clock from `time-sync` round trips, keeping the fastest of its recent samples. The room smooths the player's coarse time reports, stamps each playback report with the server-clock time at which its position was true, and reports its latency. Controllers extrapolate from that stamp, so network delay in either direction does not shift their lyrics. Measured on one machine, the phone and room started each line a median of about 1 ms apart and never more than 30 ms; across real networks the remaining error is bounded by how unevenly the fastest round trip splits between its two directions. The Lyrics tab shows the measured room and controller latency.
+- **Administration.** The dashboard's Lyrics tab lists cached songs with search, sorting, and pagination. Administrators and owners can add a video by URL or ID, set a default source and default delay, override the search artist/track, refetch from providers, paste LRC or plain lyrics (shown as the YKT source, up to 30,000 characters), preview with reading aids, or delete an entry. Every change is audited.
 
 ## Architecture
 
@@ -150,6 +184,12 @@ src/server/
   database.js                migrations, repositories, history, admin data
   roomService.js             room/queue/playback/controller invariants
   youtubeService.js          YouTube requests, playlists, refresh, quota meter
+  lyricsService.js           lyrics lookup queue, cache, source selection, documents, admin edits
+  lyricsProviders.js         LRCLIB and NetEase Cloud Music clients
+  lyricsTitle.js             YouTube title parser and fuzzy matching for searches
+  lyricsText.js              LRC parser, provider-body cleanup, script detection
+  lyricsReading.js           romaji, Korean romanization, pinyin; tokenizer process manager
+  lyricsReadingWorker.js     on-demand kuromoji child process
   adminService.js            Google identities, bootstrap, sessions, RBAC
   socketHandlers.js          validated realtime transport boundary
 client/src/
@@ -157,6 +197,7 @@ client/src/
   hooks/                     shared Socket.IO client lifecycle
   features/controller/       search, playback controls, display-name sync
   features/room/             room player identity and playback adapters
+  features/lyrics/           two-track overlay, line view, server clock, playback estimate
   features/admin/            login, dashboard panels, API client
   features/consent/          versioned local consent migration
   pages/                     lazy-loaded route shells
@@ -176,7 +217,8 @@ The controller Controls tab can seek with an interactive timeline or −15/+15 s
 - Administrator cookies are `HttpOnly`, `Secure` in production, and `SameSite=Lax`; mutations also require CSRF tokens and RBAC.
 - Search, playlist/video additions, room creation, login, and realtime events are bounded or rate limited.
 - Playlist and video additions spend the shared YouTube API quota, so their per-minute budgets are keyed on the registered controller and held server-side. Reconnecting does not return a fresh allowance. The general realtime event ceiling stays per-connection, since it guards a single socket against flooding.
-- The Privacy Policy is versioned `2026-07-21`; room creation and controller registration assert that version, and the server records only a bounded anonymous acceptance hash.
+- Lyrics providers receive only search terms derived from a video's public title and channel, plus its duration, from the server. No room, controller, or browser identifier is sent and no provider cookies are kept. Lyrics documents are served only to authenticated room players and controllers of the room playing the song.
+- The Privacy Policy is versioned `2026-10-31`; room creation and controller registration assert that version, and the server records only a bounded anonymous acceptance hash. Browsers that accepted an earlier version are asked to accept the update once.
 
 The implementation is designed to follow the current YouTube API Developer Policies, but deployment configuration and applicable local law remain operator responsibilities. Important routes: `/privacy-policy`, `/terms-of-service`, and `/contact`.
 
@@ -231,7 +273,7 @@ pm2 save
 curl --fail http://127.0.0.1:8080/api/ready
 ```
 
-Configure PM2 or system log rotation so process logs cannot grow without bound. After changing the installed Node.js version, rerun `pm2 startup` and the command it prints so the boot service uses the new Node.js path. See the [PM2 startup documentation](https://pm2.keymetrics.io/docs/usage/startup/) for the platform-specific details.
+Allow outbound HTTPS to `lrclib.net` and `music.163.com` if lyrics lookups are wanted, and leave headroom for the Japanese reading-aid process (about 400 MB while it runs). Configure PM2 or system log rotation so process logs cannot grow without bound. After changing the installed Node.js version, rerun `pm2 startup` and the command it prints so the boot service uses the new Node.js path. See the [PM2 startup documentation](https://pm2.keymetrics.io/docs/usage/startup/) for the platform-specific details.
 
 ## License
 

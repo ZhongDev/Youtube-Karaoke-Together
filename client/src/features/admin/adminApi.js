@@ -42,6 +42,18 @@ export const adminApi = {
   room: (roomId) => adminRequest(`/api/admin/rooms/${encodeURIComponent(roomId)}`),
   usage: () => adminRequest("/api/admin/usage?days=30"),
   updateQuotaLimits: (limits) => adminRequest("/api/admin/usage/limits", { method: "PATCH", body: { limits } }),
+  lyrics: ({ query = "", sort = "recent", offset = 0, limit = 25 } = {}) => adminRequest(
+    `/api/admin/lyrics?${new URLSearchParams({ query, sort, offset: String(offset), limit: String(limit) })}`
+  ),
+  lyricsSong: (videoId) => adminRequest(`/api/admin/lyrics/${encodeURIComponent(videoId)}`),
+  lyricsPreview: (videoId, { source = "", readingMode = "romaji" } = {}) => adminRequest(
+    `/api/admin/lyrics/${encodeURIComponent(videoId)}/preview?${new URLSearchParams({ source, readingMode })}`
+  ),
+  addLyricsSong: (video) => adminRequest("/api/admin/lyrics", { method: "POST", body: { video } }),
+  updateLyricsSong: (videoId, body) => adminRequest(`/api/admin/lyrics/${encodeURIComponent(videoId)}`, { method: "PATCH", body }),
+  setManualLyrics: (videoId, lyrics) => adminRequest(`/api/admin/lyrics/${encodeURIComponent(videoId)}/manual`, { method: "PUT", body: { lyrics } }),
+  refetchLyrics: (videoId) => adminRequest(`/api/admin/lyrics/${encodeURIComponent(videoId)}/refetch`, { method: "POST" }),
+  deleteLyricsSong: (videoId) => adminRequest(`/api/admin/lyrics/${encodeURIComponent(videoId)}`, { method: "DELETE" }),
   users: () => adminRequest("/api/admin/users"),
   audit: () => adminRequest("/api/admin/audit"),
   invite: (body) => adminRequest("/api/admin/invites", { method: "POST", body }),

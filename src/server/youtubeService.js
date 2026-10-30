@@ -15,6 +15,38 @@ const QUOTA_BUCKET_DEFAULTS = Object.freeze(Object.values(QUOTA_CATALOG.methods)
     return buckets;
 }, {}));
 
+const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+
+/** A YouTube video ID from a bare ID or a watch/short/embed/youtu.be URL, else null. */
+function extractVideoId(input) {
+    const value = String(input || '').trim();
+    if (VIDEO_ID.test(value)) return value;
+    let url;
+    try {
+        url = new URL(value);
+    } catch {
+        return null;
+    }
+    const host = url.hostname.replace(/^(?:www|m|music)\./, '');
+    if (host === 'youtu.be') {
+        const id = url.pathname.split('/')[1] ?? '';
+        return VIDEO_ID.test(id) ? id : null;
+    }
+    if (host !== 'youtube.com' && host !== 'youtube-nocookie.com') return null;
+    const id = url.searchParams.get('v');
+    if (id && VIDEO_ID.test(id)) return id;
+    const match = /^\/(?:shorts|embed|live|v)\/([A-Za-z0-9_-]{11})(?:[/?]|$)/.exec(url.pathname);
+    return match ? match[1] : null;
+}
+
+/** ISO 8601 video duration (PT1H2M3S) → seconds; null for live or unknown durations. */
+function parseIsoDuration(value) {
+    const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/.exec(String(value || ''));
+    if (!match) return null;
+    const seconds = Number(match[1] || 0) * 86400 + Number(match[2] || 0) * 3600 + Number(match[3] || 0) * 60 + Number(match[4] || 0);
+    return seconds > 0 ? seconds : null;
+}
+
 function pacificDate(timestamp) {
     const parts = new Intl.DateTimeFormat('en-CA', {
         timeZone: 'America/Los_Angeles',
@@ -103,8 +135,9 @@ class YouTubeService {
         const videos = [];
         for (let index = 0; index < uniqueIds.length; index += 50) {
             const batch = uniqueIds.slice(index, index + 50);
+            // contentDetails costs nothing extra and gives lyrics lookups the track length.
             const data = await this.request('videos.list', 'videos', {
-                part: 'snippet,status',
+                part: 'snippet,status,contentDetails',
                 id: batch.join(','),
                 maxResults: '50',
             }, roomId);
@@ -116,6 +149,7 @@ class YouTubeService {
                     channelTitle: cleanText(item.snippet.channelTitle, 200),
                     thumbnailUrl: item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url,
                     madeForKids: Boolean(item.status?.madeForKids),
+                    durationSec: parseIsoDuration(item.contentDetails?.duration),
                     apiDataRefreshedAt: Date.now(),
                 });
             }
@@ -239,4 +273,4 @@ class YouTubeService {
     }
 }
 
-module.exports = { QUOTA_BUCKET_DEFAULTS, QUOTA_CATALOG, YouTubeService, pacificDate };
+module.exports = { QUOTA_BUCKET_DEFAULTS, QUOTA_CATALOG, YouTubeService, extractVideoId, pacificDate, parseIsoDuration };

@@ -214,7 +214,124 @@ const MIGRATIONS = [
             updated_by TEXT REFERENCES admin_users(id) ON DELETE SET NULL
         );`,
     },
+    {
+        version: 5,
+        name: 'lyrics_cache_and_room_lyrics',
+        sql: `
+            CREATE TABLE lyrics_songs (
+                video_id TEXT PRIMARY KEY,
+                title TEXT,
+                channel_title TEXT,
+                duration_sec INTEGER,
+                language TEXT,
+                search_artist TEXT,
+                search_track TEXT,
+                default_source TEXT CHECK (default_source IS NULL OR default_source IN ('lrclib', 'netease', 'ykt')),
+                default_offset_ms INTEGER NOT NULL DEFAULT 0,
+                lookup_json TEXT NOT NULL DEFAULT '{}',
+                request_count INTEGER NOT NULL DEFAULT 0,
+                last_requested_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                api_data_refreshed_at INTEGER NOT NULL
+            );
+            CREATE INDEX lyrics_songs_refresh_idx ON lyrics_songs(api_data_refreshed_at);
+            CREATE INDEX lyrics_songs_requested_idx ON lyrics_songs(last_requested_at);
+
+            CREATE TABLE lyrics_sources (
+                video_id TEXT NOT NULL REFERENCES lyrics_songs(video_id) ON DELETE CASCADE,
+                source TEXT NOT NULL CHECK (source IN ('lrclib', 'netease', 'ykt')),
+                kind TEXT NOT NULL CHECK (kind IN ('synced_word', 'synced_line', 'plain')),
+                body TEXT NOT NULL,
+                provider_track TEXT,
+                provider_artist TEXT,
+                provider_duration_sec INTEGER,
+                confidence REAL,
+                updated_at INTEGER NOT NULL,
+                updated_by TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
+                PRIMARY KEY (video_id, source)
+            );
+
+            CREATE TABLE lyrics_readings (
+                video_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                body_hash TEXT NOT NULL,
+                lines_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (video_id, source, mode),
+                FOREIGN KEY (video_id, source) REFERENCES lyrics_sources(video_id, source) ON DELETE CASCADE
+            );
+
+            ALTER TABLE room_controllers ADD COLUMN lyrics_enabled INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE rooms ADD COLUMN lyrics_overrides_json TEXT NOT NULL DEFAULT '{}';
+        `,
+    },
+    {
+        // Songs an administrator curated outlive the YouTube metadata retention
+        // window: only their title/channel/duration snapshot is removed.
+        version: 6,
+        name: 'lyrics_admin_curation_retention',
+        sql: `
+            ALTER TABLE lyrics_songs ADD COLUMN admin_curated_at INTEGER;
+            ALTER TABLE lyrics_songs ADD COLUMN youtube_data_removed_at INTEGER;
+            UPDATE lyrics_songs SET admin_curated_at = updated_at
+                WHERE default_source IS NOT NULL OR default_offset_ms <> 0 OR search_artist IS NOT NULL OR search_track IS NOT NULL
+                    OR EXISTS (SELECT 1 FROM lyrics_sources x WHERE x.video_id = lyrics_songs.video_id AND x.source = 'ykt');
+        `,
+    },
 ];
+
+// What retention removes from a curated song: everything that came from the
+// YouTube Data API. The video ID, administrator settings, and lyrics stay.
+const STRIP_LYRICS_SONG_YOUTUBE_DATA = 'title=NULL, channel_title=NULL, duration_sec=NULL, youtube_data_removed_at=?';
+
+const LYRICS_SONG_SORTS = Object.freeze({
+    recent: 'COALESCE(s.last_requested_at, s.updated_at) DESC',
+    updated: 's.updated_at DESC',
+    requests: 's.request_count DESC, COALESCE(s.last_requested_at, s.updated_at) DESC',
+    title: "lower(COALESCE(s.title, s.search_track, s.video_id)) ASC",
+});
+
+function likePattern(value) {
+    return `%${String(value).replace(/[\\%_]/g, (character) => `\\${character}`)}%`;
+}
+
+function lyricsSongRow(row) {
+    if (!row) return null;
+    return {
+        videoId: row.video_id,
+        title: row.title || null,
+        channelTitle: row.channel_title || null,
+        durationSec: row.duration_sec ?? null,
+        language: row.language || null,
+        searchArtist: row.search_artist || null,
+        searchTrack: row.search_track || null,
+        defaultSource: row.default_source || null,
+        defaultOffsetMs: row.default_offset_ms || 0,
+        lookup: parseJson(row.lookup_json, {}),
+        requestCount: row.request_count || 0,
+        lastRequestedAt: row.last_requested_at || null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        apiDataRefreshedAt: row.api_data_refreshed_at,
+        adminCuratedAt: row.admin_curated_at || null,
+        youtubeDataRemovedAt: row.youtube_data_removed_at || null,
+    };
+}
+
+function lyricsSourceRow(row) {
+    return {
+        source: row.source,
+        kind: row.kind,
+        body: row.body,
+        providerTrack: row.provider_track || null,
+        providerArtist: row.provider_artist || null,
+        providerDurationSec: row.provider_duration_sec ?? null,
+        confidence: row.confidence ?? null,
+        updatedAt: row.updated_at,
+    };
+}
 
 function json(value, fallback = null) {
     if (value === undefined) return fallback === null ? null : JSON.stringify(fallback);
@@ -299,18 +416,19 @@ class AppDatabase {
                 INSERT INTO rooms (
                     id, status, created_at, updated_at, last_activity_at, closed_at, close_reason,
                     player_key_hash, settings_json, round_robin_json, current_video_json, playback_json,
-                    allow_new_controllers, next_queue_id, version
+                    allow_new_controllers, next_queue_id, version, lyrics_overrides_json
                 ) VALUES (
                     @id, @status, @createdAt, @updatedAt, @lastActivityAt, @closedAt, @closeReason,
                     @playerKeyHash, @settingsJson, @roundRobinJson, @currentVideoJson, @playbackJson,
-                    @allowNewControllers, @nextQueueId, @version
+                    @allowNewControllers, @nextQueueId, @version, @lyricsOverridesJson
                 ) ON CONFLICT(id) DO UPDATE SET
                     status=excluded.status, updated_at=excluded.updated_at, last_activity_at=excluded.last_activity_at,
                     closed_at=excluded.closed_at, close_reason=excluded.close_reason,
                     settings_json=excluded.settings_json, round_robin_json=excluded.round_robin_json,
                     current_video_json=excluded.current_video_json, playback_json=excluded.playback_json,
                     allow_new_controllers=excluded.allow_new_controllers,
-                    next_queue_id=excluded.next_queue_id, version=excluded.version
+                    next_queue_id=excluded.next_queue_id, version=excluded.version,
+                    lyrics_overrides_json=excluded.lyrics_overrides_json
             `).run({
                 id: room.id,
                 status: room.status,
@@ -327,6 +445,7 @@ class AppDatabase {
                 allowNewControllers: room.allowNewControllers ? 1 : 0,
                 nextQueueId: room.nextQueueId,
                 version: room.version,
+                lyricsOverridesJson: json(room.lyricsOverrides || {}, {}),
             });
 
             this.db.prepare(`
@@ -335,10 +454,11 @@ class AppDatabase {
             `).run(room.id, now);
 
             const upsertController = this.db.prepare(`
-                INSERT INTO room_controllers(id, room_id, token_hash, name, color_hue, enabled, created_at, updated_at, removed_at)
-                VALUES (@id, @roomId, @tokenHash, @name, @colorHue, @enabled, @createdAt, @updatedAt, @removedAt)
+                INSERT INTO room_controllers(id, room_id, token_hash, name, color_hue, enabled, created_at, updated_at, removed_at, lyrics_enabled)
+                VALUES (@id, @roomId, @tokenHash, @name, @colorHue, @enabled, @createdAt, @updatedAt, @removedAt, @lyricsEnabled)
                 ON CONFLICT(id) DO UPDATE SET name=excluded.name, color_hue=excluded.color_hue,
-                    enabled=excluded.enabled, updated_at=excluded.updated_at, removed_at=excluded.removed_at
+                    enabled=excluded.enabled, updated_at=excluded.updated_at, removed_at=excluded.removed_at,
+                    lyrics_enabled=excluded.lyrics_enabled
             `);
             for (const controller of room.controllers.values()) {
                 upsertController.run({
@@ -351,6 +471,7 @@ class AppDatabase {
                     createdAt: controller.createdAt,
                     updatedAt: now,
                     removedAt: controller.removedAt || null,
+                    lyricsEnabled: controller.lyricsEnabled ? 1 : 0,
                 });
             }
 
@@ -411,6 +532,7 @@ class AppDatabase {
                     enabled: Boolean(controller.enabled),
                     createdAt: controller.created_at,
                     removedAt: controller.removed_at,
+                    lyricsEnabled: Boolean(controller.lyrics_enabled),
                 });
             }
             return {
@@ -428,6 +550,7 @@ class AppDatabase {
                 allowNewControllers: Boolean(row.allow_new_controllers),
                 nextQueueId: row.next_queue_id,
                 version: row.version,
+                lyricsOverrides: parseJson(row.lyrics_overrides_json, {}),
                 controllers,
                 queue: queueQuery.all(row.id).map(queueRowToVideo),
             };
@@ -485,7 +608,7 @@ class AppDatabase {
     closeRoom(roomId, reason, closedAt = Date.now()) {
         this.db.transaction(() => {
             this.db.prepare(`UPDATE rooms SET status='closed', closed_at=?, updated_at=?, close_reason=?,
-                current_video_json=NULL, round_robin_json='{"participants":[],"lastServedControllerId":null}',
+                current_video_json=NULL, lyrics_overrides_json='{}', round_robin_json='{"participants":[],"lastServedControllerId":null}',
                 playback_json='{"state":"unstarted","positionSec":0,"durationSec":null,"videoId":null,"queueId":null,"volume":100}' WHERE id=?`)
                 .run(closedAt, closedAt, reason, roomId);
             this.db.prepare("UPDATE room_queue_items SET status='abandoned', position=NULL, ended_at=COALESCE(ended_at, ?) WHERE room_id=? AND status IN ('queued','playing')")
@@ -615,6 +738,223 @@ class AppDatabase {
             this.audit(actorId, 'youtube_quota_limits_updated', 'youtube_quota', null, { updates }, now);
         })();
         return this.youtubeQuotaLimits();
+    }
+
+    // ── lyrics cache ──
+    //
+    // Rows are keyed by YouTube video ID and carry a snapshot of the video's
+    // public metadata, which is YouTube API data: api_data_refreshed_at tracks
+    // its age so maintenance can refresh it or delete the row before 30 days.
+
+    lyricsSong(videoId) {
+        return lyricsSongRow(this.db.prepare('SELECT * FROM lyrics_songs WHERE video_id=?').get(videoId));
+    }
+
+    lyricsSources(videoId) {
+        return this.db.prepare(`SELECT * FROM lyrics_sources WHERE video_id=?
+            ORDER BY CASE source WHEN 'ykt' THEN 0 WHEN 'lrclib' THEN 1 ELSE 2 END`).all(videoId).map(lyricsSourceRow);
+    }
+
+    /**
+     * Create the song row or update its metadata snapshot. A snapshot only
+     * replaces the stored one when it is at least as fresh, so a stale room
+     * item cannot roll back a newer refresh.
+     */
+    upsertLyricsSongMetadata({ videoId, title = null, channelTitle = null, durationSec = null, refreshedAt, now = Date.now() }) {
+        const refreshed = Number.isFinite(refreshedAt) ? Math.min(refreshedAt, now) : now;
+        const duration = Number.isFinite(durationSec) && durationSec > 0 ? Math.round(durationSec) : null;
+        this.db.prepare(`
+            INSERT INTO lyrics_songs(video_id, title, channel_title, duration_sec, created_at, updated_at, api_data_refreshed_at)
+            VALUES (@videoId, @title, @channelTitle, @duration, @now, @now, @refreshed)
+            ON CONFLICT(video_id) DO UPDATE SET
+                title=CASE WHEN excluded.api_data_refreshed_at >= lyrics_songs.api_data_refreshed_at AND excluded.title IS NOT NULL THEN excluded.title ELSE lyrics_songs.title END,
+                channel_title=CASE WHEN excluded.api_data_refreshed_at >= lyrics_songs.api_data_refreshed_at AND excluded.title IS NOT NULL THEN excluded.channel_title ELSE lyrics_songs.channel_title END,
+                duration_sec=COALESCE(excluded.duration_sec, lyrics_songs.duration_sec),
+                -- A fresh snapshot restores a curated song whose YouTube data was removed.
+                youtube_data_removed_at=CASE WHEN excluded.api_data_refreshed_at >= lyrics_songs.api_data_refreshed_at AND excluded.title IS NOT NULL THEN NULL ELSE lyrics_songs.youtube_data_removed_at END,
+                api_data_refreshed_at=MAX(lyrics_songs.api_data_refreshed_at, excluded.api_data_refreshed_at)
+        `).run({ videoId, title, channelTitle, duration, now, refreshed });
+        return this.lyricsSong(videoId);
+    }
+
+    recordLyricsRequest(videoId, now = Date.now()) {
+        this.db.prepare('UPDATE lyrics_songs SET request_count=request_count+1, last_requested_at=? WHERE video_id=?').run(now, videoId);
+    }
+
+    /** Store one lookup's provider outcomes and hits in a single transaction. */
+    saveLyricsLookup(videoId, { outcomes, hits = [], language = null }, now = Date.now()) {
+        this.db.transaction(() => {
+            const song = this.db.prepare('SELECT lookup_json FROM lyrics_songs WHERE video_id=?').get(videoId);
+            if (!song) return;
+            const lookup = { ...parseJson(song.lookup_json, {}), ...outcomes };
+            const upsert = this.db.prepare(`
+                INSERT INTO lyrics_sources(video_id, source, kind, body, provider_track, provider_artist, provider_duration_sec, confidence, updated_at)
+                VALUES (@videoId, @source, @kind, @body, @providerTrack, @providerArtist, @providerDurationSec, @confidence, @now)
+                ON CONFLICT(video_id, source) DO UPDATE SET kind=excluded.kind, body=excluded.body,
+                    provider_track=excluded.provider_track, provider_artist=excluded.provider_artist,
+                    provider_duration_sec=excluded.provider_duration_sec, confidence=excluded.confidence,
+                    updated_at=excluded.updated_at, updated_by=NULL
+            `);
+            for (const hit of hits) {
+                upsert.run({
+                    videoId,
+                    source: hit.source,
+                    kind: hit.kind,
+                    body: hit.body,
+                    providerTrack: hit.providerTrack || null,
+                    providerArtist: hit.providerArtist || null,
+                    providerDurationSec: hit.providerDurationSec ?? null,
+                    confidence: hit.confidence ?? null,
+                    now,
+                });
+            }
+            this.db.prepare(`UPDATE lyrics_songs SET lookup_json=?, language=COALESCE(?, language), updated_at=? WHERE video_id=?`)
+                .run(json(lookup, {}), language, now, videoId);
+        })();
+        return this.lyricsSong(videoId);
+    }
+
+    /** Forget provider results so the next lookup searches again. Administrator lyrics are kept. */
+    clearLyricsProviderResults(videoId, now = Date.now()) {
+        this.db.transaction(() => {
+            this.db.prepare("DELETE FROM lyrics_sources WHERE video_id=? AND source <> 'ykt'").run(videoId);
+            this.db.prepare("UPDATE lyrics_songs SET lookup_json='{}', updated_at=? WHERE video_id=?").run(now, videoId);
+        })();
+    }
+
+    /**
+     * Swap a song's provider results for a corrected search's, and keep the
+     * search terms that found them, in one transaction.
+     */
+    replaceLyricsProviderResults(videoId, { outcomes, hits, language, searchArtist, searchTrack }, now = Date.now()) {
+        return this.db.transaction(() => {
+            this.clearLyricsProviderResults(videoId, now);
+            this.updateLyricsSong(videoId, { searchArtist, searchTrack }, now);
+            return this.saveLyricsLookup(videoId, { outcomes, hits, language }, now);
+        })();
+    }
+
+    setLyricsSource(videoId, { source, kind, body, updatedBy = null }, now = Date.now()) {
+        this.db.prepare(`
+            INSERT INTO lyrics_sources(video_id, source, kind, body, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(video_id, source) DO UPDATE SET kind=excluded.kind, body=excluded.body,
+                provider_track=NULL, provider_artist=NULL, provider_duration_sec=NULL, confidence=NULL,
+                updated_at=excluded.updated_at, updated_by=excluded.updated_by
+        `).run(videoId, source, kind, body, now, updatedBy);
+        this.db.prepare('UPDATE lyrics_songs SET updated_at=? WHERE video_id=?').run(now, videoId);
+    }
+
+    deleteLyricsSource(videoId, source, now = Date.now()) {
+        const removed = this.db.prepare('DELETE FROM lyrics_sources WHERE video_id=? AND source=?').run(videoId, source).changes;
+        if (removed) this.db.prepare('UPDATE lyrics_songs SET updated_at=? WHERE video_id=?').run(now, videoId);
+        return removed > 0;
+    }
+
+    updateLyricsSong(videoId, patch, now = Date.now()) {
+        const columns = {
+            defaultSource: 'default_source',
+            defaultOffsetMs: 'default_offset_ms',
+            searchArtist: 'search_artist',
+            searchTrack: 'search_track',
+            language: 'language',
+        };
+        const assignments = [];
+        const params = [];
+        for (const [key, column] of Object.entries(columns)) {
+            if (!Object.hasOwn(patch, key)) continue;
+            assignments.push(`${column}=?`);
+            params.push(patch[key]);
+        }
+        if (!assignments.length) return this.lyricsSong(videoId);
+        this.db.prepare(`UPDATE lyrics_songs SET ${assignments.join(', ')}, updated_at=? WHERE video_id=?`).run(...params, now, videoId);
+        return this.lyricsSong(videoId);
+    }
+
+    deleteLyricsSongs(videoIds) {
+        if (!videoIds.length) return 0;
+        const remove = this.db.prepare('DELETE FROM lyrics_songs WHERE video_id=?');
+        return this.db.transaction(() => videoIds.reduce((count, videoId) => count + remove.run(videoId).changes, 0))();
+    }
+
+    /** Record that an administrator added or edited a song, which keeps it past the retention window. */
+    markLyricsSongCurated(videoId, now = Date.now()) {
+        this.db.prepare('UPDATE lyrics_songs SET admin_curated_at=COALESCE(admin_curated_at, ?) WHERE video_id=?').run(now, videoId);
+    }
+
+    /**
+     * Retire songs whose YouTube metadata can no longer be kept (the video is
+     * gone, or its snapshot outlived the retention window): delete them, or
+     * for curated songs remove only the YouTube data.
+     */
+    retireLyricsSongs(videoIds, now = Date.now()) {
+        if (!videoIds.length) return { removed: 0, kept: 0 };
+        const strip = this.db.prepare(`UPDATE lyrics_songs SET ${STRIP_LYRICS_SONG_YOUTUBE_DATA}
+            WHERE video_id=? AND admin_curated_at IS NOT NULL AND youtube_data_removed_at IS NULL`);
+        const remove = this.db.prepare('DELETE FROM lyrics_songs WHERE video_id=? AND admin_curated_at IS NULL');
+        return this.db.transaction(() => videoIds.reduce((counts, videoId) => ({
+            kept: counts.kept + strip.run(now, videoId).changes,
+            removed: counts.removed + remove.run(videoId).changes,
+        }), { removed: 0, kept: 0 }))();
+    }
+
+    listLyricsSongs({ query = '', sort = 'recent', limit = 50, offset = 0 } = {}) {
+        const clauses = [];
+        const params = [];
+        const text = String(query || '').trim();
+        if (text) {
+            const pattern = likePattern(text);
+            clauses.push(`(s.video_id = ? OR s.title LIKE ? ESCAPE '\\' OR s.channel_title LIKE ? ESCAPE '\\'
+                OR s.search_artist LIKE ? ESCAPE '\\' OR s.search_track LIKE ? ESCAPE '\\'
+                OR EXISTS (SELECT 1 FROM lyrics_sources x WHERE x.video_id=s.video_id
+                    AND (x.provider_track LIKE ? ESCAPE '\\' OR x.provider_artist LIKE ? ESCAPE '\\')))`);
+            params.push(text, pattern, pattern, pattern, pattern, pattern, pattern);
+        }
+        const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+        const total = this.db.prepare(`SELECT COUNT(*) count FROM lyrics_songs s ${where}`).get(...params).count;
+        const rows = this.db.prepare(`
+            SELECT s.*,
+                (SELECT json_group_array(json_object('source', x.source, 'kind', x.kind, 'providerTrack', x.provider_track, 'providerArtist', x.provider_artist))
+                    FROM lyrics_sources x WHERE x.video_id=s.video_id) sources_json
+            FROM lyrics_songs s ${where}
+            ORDER BY ${LYRICS_SONG_SORTS[sort] || LYRICS_SONG_SORTS.recent}
+            LIMIT ? OFFSET ?
+        `).all(...params, Math.min(Math.max(limit, 1), 100), Math.max(offset, 0));
+        return {
+            total,
+            rows: rows.map((row) => ({ ...lyricsSongRow(row), sources: parseJson(row.sources_json, []) })),
+        };
+    }
+
+    lyricsReading(videoId, source, mode) {
+        const row = this.db.prepare('SELECT body_hash, lines_json FROM lyrics_readings WHERE video_id=? AND source=? AND mode=?').get(videoId, source, mode);
+        return row ? { bodyHash: row.body_hash, lines: parseJson(row.lines_json, null) } : null;
+    }
+
+    saveLyricsReading(videoId, source, mode, bodyHash, lines, now = Date.now()) {
+        this.db.prepare(`
+            INSERT INTO lyrics_readings(video_id, source, mode, body_hash, lines_json, created_at) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(video_id, source, mode) DO UPDATE SET body_hash=excluded.body_hash, lines_json=excluded.lines_json, created_at=excluded.created_at
+        `).run(videoId, source, mode, bodyHash, json(lines, []), now);
+    }
+
+    /** Songs whose YouTube metadata snapshot is due for a refresh, oldest first. */
+    /** Songs holding a YouTube snapshot old enough to refresh. */
+    staleLyricsSongIds(cutoff, limit = 500) {
+        return this.db.prepare(`SELECT video_id FROM lyrics_songs WHERE api_data_refreshed_at <= ? AND youtube_data_removed_at IS NULL
+            ORDER BY api_data_refreshed_at LIMIT ?`).pluck().all(cutoff, limit);
+    }
+
+    /**
+     * Snapshots that outlived the retention window without a refresh: the song
+     * is deleted with its lyrics, unless an administrator curated it, in which
+     * case only its YouTube data is removed.
+     */
+    expireLyricsSongs(cutoff, now = Date.now()) {
+        return this.db.transaction(() => ({
+            kept: this.db.prepare(`UPDATE lyrics_songs SET ${STRIP_LYRICS_SONG_YOUTUBE_DATA}
+                WHERE api_data_refreshed_at <= ? AND admin_curated_at IS NOT NULL AND youtube_data_removed_at IS NULL`).run(now, cutoff).changes,
+            removed: this.db.prepare('DELETE FROM lyrics_songs WHERE api_data_refreshed_at <= ? AND admin_curated_at IS NULL').run(cutoff).changes,
+        }))();
     }
 
     recordPolicyAcceptance({ adminUserId = null, anonymousIdHash = null, roomId = null, policyType, policyVersion, acceptedAt = Date.now() }) {
@@ -750,4 +1090,4 @@ class AppDatabase {
     }
 }
 
-module.exports = { AppDatabase, MIGRATIONS, parseJson, queueRowToVideo };
+module.exports = { AppDatabase, LYRICS_SONG_SORTS, MIGRATIONS, parseJson, queueRowToVideo };

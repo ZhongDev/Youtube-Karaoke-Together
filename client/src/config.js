@@ -86,6 +86,9 @@ export const STORAGE_KEYS = {
     BG_COLOR_ENABLED: 'ytkt_bgColorEnabled',
     ROOM_QUEUE_COLORS_ENABLED: 'ytkt_roomQueueColorsEnabled',
     LYRICS_ROMAJI_ENABLED: 'ytkt_lyricsRomajiEnabled',
+    ROOM_LYRICS_READING: 'ytkt_roomLyricsReading',
+    LYRICS_READING: 'ytkt_lyricsReading',
+    LYRICS_SYNCED_VIEW: 'ytkt_lyricsSyncedView',
 };
 
 // Read from the repository-root policy.json that the server also loads, so a

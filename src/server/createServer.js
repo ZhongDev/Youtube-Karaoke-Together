@@ -10,15 +10,16 @@ const { Server } = require('socket.io');
 const { version } = require('../../package.json');
 const { AdminService } = require('./adminService');
 const { AppDatabase } = require('./database');
+const { LyricsService } = require('./lyricsService');
 const { RoomService } = require('./roomService');
-const { registerSocketHandlers } = require('./socketHandlers');
+const { lyricsStateFor, registerSocketHandlers } = require('./socketHandlers');
 const {
     AppError,
     csrfCookie,
     parseBearer,
     sessionCookie,
 } = require('./security');
-const { YouTubeService } = require('./youtubeService');
+const { YouTubeService, extractVideoId } = require('./youtubeService');
 
 const BACKUP_FILE_PATTERN = /^youtube-karaoke-.*\.sqlite$/;
 
@@ -37,6 +38,16 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
     const roomService = new RoomService({ db, config, logger });
     const youtubeService = new YouTubeService({ db, config, logger, fetchImpl });
     const adminService = new AdminService({ db, config, logger, verifyGoogleToken });
+    // A lookup finishing or an administrator edit changes what every room
+    // currently playing that song should show.
+    const lyricsService = new LyricsService({
+        db, config, logger, fetchImpl,
+        onSongUpdated: (videoId) => {
+            for (const room of roomService.rooms.values()) {
+                if (room.currentVideo?.id === videoId) io.to(room.id).emit('lyrics-updated', lyricsStateFor(room, { roomService, lyricsService }));
+            }
+        },
+    });
     const app = express();
     const httpServer = http.createServer(app);
 
@@ -209,6 +220,61 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
         res.json(youtubeService.updateQuotaLimits(req.body?.limits, admin.admin_user_id));
     }));
 
+    app.get('/api/admin/lyrics', adminRoute({ role: 'viewer' }, async (req, res) => {
+        res.json({
+            ...lyricsService.list({
+                query: typeof req.query.query === 'string' ? req.query.query.slice(0, 200) : '',
+                sort: typeof req.query.sort === 'string' ? req.query.sort : 'recent',
+                limit: numericQuery(req.query.limit, 50),
+                offset: numericQuery(req.query.offset, 0, 1_000_000),
+            }),
+            providers: lyricsService.enabledProviders,
+        });
+    }));
+
+    app.post('/api/admin/lyrics', adminRoute({ role: 'admin', csrf: true }, async (req, res, admin) => {
+        const videoId = extractVideoId(req.body?.video);
+        if (!videoId) throw new AppError('invalid_video', 'Enter a YouTube video URL or 11-character video ID');
+        const [video] = await youtubeService.lookupVideos([videoId], null);
+        if (!video) throw new AppError('video_unavailable', 'This video is unavailable, not public, or not embeddable', 404);
+        lyricsService.noteVideo(video, { durationSec: video.durationSec });
+        lyricsService.markCurated(video.id);
+        db.audit(admin.admin_user_id, 'lyrics_song_added', 'lyrics_song', video.id, {});
+        lyricsService.ensure(video, { durationSec: video.durationSec });
+        res.status(201).json(lyricsService.detail(video.id));
+    }));
+
+    app.get('/api/admin/lyrics/:videoId', adminRoute({ role: 'viewer' }, async (req, res) => {
+        res.json(lyricsService.detail(req.params.videoId));
+    }));
+
+    app.get('/api/admin/lyrics/:videoId/preview', adminRoute({ role: 'viewer' }, async (req, res) => {
+        lyricsService.requireSong(req.params.videoId);
+        const document = await lyricsService.document(req.params.videoId, {
+            source: typeof req.query.source === 'string' ? req.query.source : null,
+            readingMode: typeof req.query.readingMode === 'string' ? req.query.readingMode : 'romaji',
+        });
+        res.json({ document });
+    }));
+
+    app.patch('/api/admin/lyrics/:videoId', adminRoute({ role: 'admin', csrf: true }, async (req, res, admin) => {
+        lyricsService.updateSong(req.params.videoId, req.body, admin.admin_user_id);
+        res.json(lyricsService.detail(req.params.videoId));
+    }));
+
+    app.put('/api/admin/lyrics/:videoId/manual', adminRoute({ role: 'admin', csrf: true }, async (req, res, admin) => {
+        res.json(lyricsService.setManualLyrics(req.params.videoId, req.body?.lyrics, admin.admin_user_id));
+    }));
+
+    app.post('/api/admin/lyrics/:videoId/refetch', adminRoute({ role: 'admin', csrf: true }, async (req, res, admin) => {
+        res.json(await lyricsService.refetch(req.params.videoId, admin.admin_user_id));
+    }));
+
+    app.delete('/api/admin/lyrics/:videoId', adminRoute({ role: 'admin', csrf: true }, async (req, res, admin) => {
+        lyricsService.deleteSong(req.params.videoId, admin.admin_user_id);
+        res.status(204).end();
+    }));
+
     app.get('/api/admin/users', adminRoute({ role: 'owner' }, async (req, res) => {
         res.json({ users: db.listAdmins().map((user) => adminService.publicUser(user)) });
     }));
@@ -259,7 +325,7 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
             callback(null, originAllowed(origin));
         },
     });
-    registerSocketHandlers(io, { roomService, youtubeService, config, logger });
+    registerSocketHandlers(io, { roomService, youtubeService, lyricsService, config, logger });
 
     let maintenanceTimer = null;
     let backupTimer = null;
@@ -277,6 +343,7 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
             try {
                 const ids = stale.filter((entry) => entry.roomId === roomId).map((entry) => entry.videoId);
                 const refreshed = await youtubeService.lookupVideos(ids, roomId);
+                lyricsService.refreshMetadata(refreshed);
                 if (roomService.refreshYouTubeMetadata(roomId, ids, refreshed)) {
                     io.to(roomId).emit('room-state', roomService.publicState(roomService.requireRoom(roomId)));
                 }
@@ -284,9 +351,32 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
                 logger.warn(`[WARN] YouTube metadata refresh failed for room ${roomId}: ${error.message}`);
             }
         }
-        const purged = roomService.runRetention();
-        if (purged.rooms || purged.usage) db.audit(null, 'retention_purge', 'maintenance', null, purged);
-        if (expired.length || purged.rooms || purged.usage) logger.info(`[INFO] Maintenance expired=${expired.length} purgedRooms=${purged.rooms} purgedUsage=${purged.usage}`);
+        // Cached lyrics carry a YouTube metadata snapshot keyed by video ID. Refresh
+        // it well before the retention boundary; anything that still reaches the
+        // boundary (the API was unavailable throughout) is deleted with its lyrics,
+        // except songs an administrator curated, which only lose the snapshot.
+        let lyricsRefresh = { refreshed: 0, removed: 0, kept: 0 };
+        try {
+            lyricsRefresh = await lyricsService.refreshStale({
+                cutoff: Date.now() - config.lyricsRefreshAfterMs,
+                lookupVideos: (ids) => youtubeService.lookupVideos(ids, null),
+            });
+        } catch (error) {
+            logger.warn(`[WARN] Lyrics cache metadata refresh failed: ${error.message}`);
+        }
+        const lyricsExpiry = db.expireLyricsSongs(Date.now() - config.historyRetentionMs);
+        const purged = {
+            ...roomService.runRetention(),
+            lyrics: lyricsExpiry.removed + lyricsRefresh.removed,
+            // Curated songs whose YouTube snapshot was removed instead.
+            lyricsYouTubeDataRemoved: lyricsExpiry.kept + lyricsRefresh.kept,
+        };
+        if (purged.rooms || purged.usage || purged.lyrics || purged.lyricsYouTubeDataRemoved) {
+            db.audit(null, 'retention_purge', 'maintenance', null, purged);
+        }
+        if (expired.length || purged.rooms || purged.usage || purged.lyrics || purged.lyricsYouTubeDataRemoved) {
+            logger.info(`[INFO] Maintenance expired=${expired.length} purgedRooms=${purged.rooms} purgedUsage=${purged.usage} purgedLyrics=${purged.lyrics} curatedLyricsYouTubeDataRemoved=${purged.lyricsYouTubeDataRemoved}`);
+        }
     };
 
     const backupFiles = () => {
@@ -357,6 +447,7 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
         if (backupTimer) clearInterval(backupTimer);
         maintenanceTimer = null;
         backupTimer = null;
+        lyricsService.stop();
         if (started) {
             roomService.flush();
             await new Promise((resolve) => io.close(() => httpServer.close(() => resolve())));
@@ -366,7 +457,7 @@ function createServer({ config, logger = console, database = null, fetchImpl = f
     }
 
     return {
-        app, httpServer, io, db, roomService, youtubeService, adminService,
+        app, httpServer, io, db, roomService, youtubeService, adminService, lyricsService,
         backupDue, lastBackupAt, runBackup, runBackupIfDue, runMaintenance, start, stop,
     };
 }

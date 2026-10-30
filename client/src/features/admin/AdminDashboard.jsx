@@ -6,17 +6,26 @@ import {
 import { useNavigate } from "react-router";
 import { adminApi } from "./adminApi";
 import AdministratorsPanel from "./AdministratorsPanel";
+import LyricsPanel from "./LyricsPanel";
 import RoomDetailDialog from "./RoomDetailDialog";
 import RoomTable, { formatDate } from "./RoomTable";
 import UsagePanel from "./UsagePanel";
 
-const sections = ["Overview", "Active Rooms", "30-Day History", "API Usage", "Administrators", "Audit"];
+const sections = [
+  { key: "overview", label: "Overview" },
+  { key: "active", label: "Active Rooms" },
+  { key: "history", label: "30-Day History" },
+  { key: "usage", label: "API Usage" },
+  { key: "lyrics", label: "Lyrics" },
+  { key: "administrators", label: "Administrators", ownerOnly: true },
+  { key: "audit", label: "Audit", ownerOnly: true },
+];
 const PAGE_SIZE = 50;
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
-  const [tab, setTab] = useState(0);
+  const [tab, setTab] = useState("overview");
   const [active, setActive] = useState([]);
   const [history, setHistory] = useState([]);
   const [activeTotal, setActiveTotal] = useState(0);
@@ -81,24 +90,25 @@ const AdminDashboard = () => {
     <Container maxWidth="xl" sx={{ py: 3 }}>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" gap={2} sx={{ mb: 2 }}>
-        <Tabs value={tab} onChange={(event, value) => setTab(value)} variant="scrollable">{sections.map((section, index) => (
-          <Tab key={section} label={section} disabled={index >= 4 && user?.role !== "owner"} />
+        <Tabs value={tab} onChange={(event, value) => setTab(value)} variant="scrollable">{sections.map((section) => (
+          <Tab key={section.key} value={section.key} label={section.label} disabled={section.ownerOnly && user?.role !== "owner"} />
         ))}</Tabs>
         <FormControl size="small" sx={{ minWidth: 180 }}><InputLabel>Display timezone</InputLabel><Select value={timeZone} label="Display timezone" onChange={(event) => setTimeZone(event.target.value)}>
           <MenuItem value={Intl.DateTimeFormat().resolvedOptions().timeZone}>Browser local</MenuItem><MenuItem value="UTC">UTC</MenuItem><MenuItem value="Australia/Sydney">Australia/Sydney</MenuItem>
         </Select></FormControl>
       </Stack>
 
-      {tab === 0 && <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+      {tab === "overview" && <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
         {[['Active rooms', activeTotal], ['Rooms closed in 30 days', historyTotal], ['API requests metered', usage?.rows.reduce((sum, row) => sum + row.requests, 0) || 0]].map(([label, value]) => (
           <Paper key={label} sx={{ p: 3, flex: 1 }}><Typography color="text.secondary">{label}</Typography><Typography variant="h3">{value}</Typography></Paper>
         ))}
       </Stack>}
-      {tab === 1 && <RoomTable rooms={active} total={activeTotal} page={activePage} pageSize={PAGE_SIZE} onPageChange={setActivePage} timeZone={timeZone} onOpen={openRoom} />}
-      {tab === 2 && <RoomTable rooms={history} total={historyTotal} page={historyPage} pageSize={PAGE_SIZE} onPageChange={setHistoryPage} timeZone={timeZone} onOpen={openRoom} historical />}
-      {tab === 3 && <UsagePanel usage={usage} canEdit={["owner", "admin"].includes(user?.role)} onUsageChanged={setUsage} />}
-      {tab === 4 && user?.role === "owner" && <AdministratorsPanel users={users} onRefresh={refreshUsers} />}
-      {tab === 5 && user?.role === "owner" && <Stack spacing={1}>{audit.map((entry) => <Paper key={entry.id} sx={{ p: 2 }}>
+      {tab === "active" && <RoomTable rooms={active} total={activeTotal} page={activePage} pageSize={PAGE_SIZE} onPageChange={setActivePage} timeZone={timeZone} onOpen={openRoom} />}
+      {tab === "history" && <RoomTable rooms={history} total={historyTotal} page={historyPage} pageSize={PAGE_SIZE} onPageChange={setHistoryPage} timeZone={timeZone} onOpen={openRoom} historical />}
+      {tab === "usage" && <UsagePanel usage={usage} canEdit={["owner", "admin"].includes(user?.role)} onUsageChanged={setUsage} />}
+      {tab === "lyrics" && <LyricsPanel canEdit={["owner", "admin"].includes(user?.role)} timeZone={timeZone} />}
+      {tab === "administrators" && user?.role === "owner" && <AdministratorsPanel users={users} onRefresh={refreshUsers} />}
+      {tab === "audit" && user?.role === "owner" && <Stack spacing={1}>{audit.map((entry) => <Paper key={entry.id} sx={{ p: 2 }}>
         <Typography fontWeight={600}>{entry.action}</Typography><Typography variant="body2" color="text.secondary">{entry.actorEmail || "system"} · {formatDate(entry.occurredAt, timeZone)} · {entry.targetType || "—"} {entry.targetId || ""}</Typography>
       </Paper>)}</Stack>}
       <Button onClick={() => load()} sx={{ mt: 3 }}>Refresh all data</Button>

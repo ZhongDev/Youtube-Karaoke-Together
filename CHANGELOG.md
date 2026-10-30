@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Added opt-in time-synced lyrics. A controller turns on **Lyrics on the room screen** from Controls, optionally **Only for singers who turn lyrics on**, so a song shows lyrics only when the controller that queued it has enabled lyrics for their own songs
+- Added a Joysound-style two-lane lyrics overlay over the room video: lines fade in ahead of time and are wiped from white to red as they are sung, word-accurately for enhanced LRC. The overlay is hidden from assistive technology and passes every click and touch through to the YouTube player
+- Added reading aids over CJK lyrics on by default: romaji for Japanese (kuromoji), Revised Romanization for Korean, and pinyin for Chinese (pinyin-pro). Room Admin can switch the room screen to furigana for Japanese or turn reading aids off
+- Added a controller Lyrics tab that mirrors the room screen line by line with the sung line kept centred, or as a plain list with time sync off. It selects the room's lyrics source (LRCLIB, NetEase, or YKT administrator lyrics) and sets the offset with ±100/±500 ms buttons or an exact whole number
+- Added server-side lyrics lookup from LRCLIB and NetEase Cloud Music. It parses the video title together with the channel name, weighing the channel as the artist by its kind (Topic, VEVO, official, label). It rejects provider results whose title does not resemble the song, keeps a SQLite cache of every hit, remembers misses, uses retry windows, and shares concurrent lookups
+- Added a lyrics match screen to the controller Lyrics tab. It shows the YouTube title (selectable, with a copy button) beside each source's matched track, artist, length, and confidence, and the searches that were run. Any controller can search again with a corrected artist and title; lyrics are replaced only when that search finds something, and the correction is kept for the video
+- Added retention protection for curated lyrics. Songs an administrator added, edited, refetched, or pasted lyrics for lose only their YouTube title, channel, and duration when that snapshot can no longer be kept, rather than being deleted; the snapshot returns when a room plays the video again
+- Added lyrics prefetching: the next five queued songs are looked up, with their reading aids prepared, whenever the room shows their lyrics or someone in the room reads lyrics on a controller
+- Added a Lyrics tab to the administrator dashboard: a searchable, sortable, paginated table of cached songs and a per-song view to set the default source and delay, override search terms, refetch, add a video by URL or ID, paste YKT lyrics, preview reading aids, and delete entries
+- Added `time-sync` clock probing. The room stamps each playback report with the server-clock time its position was true, plus its playback rate and measured latency, so controllers extrapolate the same position whatever their own network delay
+- Added the `LYRICS_PROVIDERS` setting to choose providers or turn provider lookups off
+- Added server, Socket.IO, administrator API, retention, and client tests for lyrics lookup, caching, display rules, timing, and the controller and administrator interfaces
+
+### Changed
+
+- The room player now smooths the embed's coarse time reports and reports playback state changes immediately as well as once per second
+- `update-settings` accepts partial room settings and acknowledges the resulting settings
+- YouTube video lookups also request `contentDetails` for the track length, which costs no additional quota
+- Controller navigation gained a Lyrics tab between Queue and Controls
+- Administrator dashboard tabs are identified by name, so owner-only tabs stay gated as tabs are added
+- Japanese reading aids load their ~350 MB dictionary in an on-demand child process that exits when idle, isolating its memory and any failure from the server
+
+### Security
+
+- Lyrics documents are served only to authenticated room players and controllers of the room playing the song; lyrics edits require the `admin` role and a CSRF token and are audited
+- Controller lyrics-search corrections require the controller's key and the current queue item. They are limited per controller by `maxLyricsSearchesPerMinute` and recorded in the security audit log. A correction that finds nothing changes nothing
+
+### Documentation
+
+- Updated the Privacy Policy to version `2026-10-31`: it discloses the lyrics providers and the search terms they receive, the lyrics cache and its refresh-or-delete retention, room lyrics settings and controller preferences, and playback timing data. Browsers that accepted an earlier version are asked to accept the update
+- Updated the Terms of Service with the optional lyrics feature, its third-party sources, and lyrics rights
+- Documented lyrics behavior, configuration, retention, quota use, memory needs, and outbound network requirements in the README and client README
+
 ## [3.3.0] - 2026-08-02 - Reliability and Maintenance
 
 ### Changed

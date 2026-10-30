@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { AppError, cleanText, generateToken, isIdentifier, tokenDigest } = require('./security');
+const { normalizeOffset, normalizeSource } = require('./lyricsService');
 
 const PLAYBACK_STATES = new Set(['unstarted', 'ended', 'playing', 'paused', 'buffering', 'cued']);
 const PLAYBACK_COMMANDS = new Set(['play', 'pause', 'seek', 'volume']);
@@ -11,6 +12,16 @@ const ADVANCING_PLAYBACK_STATES = new Set(['playing', 'buffering']);
 // Queue items whose controller record has gone share one rotation slot. Held
 // outside the persisted participant ring so it cannot accumulate there.
 const ORPHANED_PARTICIPANT = Symbol('orphaned participant');
+const BOOLEAN_SETTINGS = Object.freeze(['roundRobinEnabled', 'lyricsEnabled', 'lyricsPerUser']);
+const DEFAULT_SETTINGS = Object.freeze({ roundRobinEnabled: false, lyricsEnabled: false, lyricsPerUser: false });
+// Per-video lyrics overrides are kept for the songs a room has adjusted most
+// recently; a re-queued song keeps its source and offset.
+const MAX_LYRICS_OVERRIDES = 100;
+// How long after a controller last read lyrics its room keeps prefetching them.
+const LYRICS_READER_WINDOW_MS = 30 * 60 * 1000;
+// A playback sample stamped further than this from the server clock is from a
+// client whose clock sync has not settled; the receive time is used instead.
+const MAX_SAMPLE_SKEW_MS = 10_000;
 
 function normalizeVolume(value, fallback = 100) {
     return Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : fallback;
@@ -39,6 +50,10 @@ class RoomService {
                 delete room.roundRobin.lastServedIdx;
             }
             room.playback.volume = normalizeVolume(room.playback.volume);
+            // Restored playback does not advance by downtime, so its sample is "now".
+            room.playback.sampledAt = now;
+            room.settings = { ...DEFAULT_SETTINGS, ...room.settings };
+            room.lyricsOverrides ||= {};
             this.rooms.set(room.id, room);
         }
         this.logger.info(`[INFO] Restored ${this.rooms.size} active room(s) from SQLite.`);
@@ -58,7 +73,7 @@ class RoomService {
             closedAt: null,
             closeReason: null,
             playerKeyHash: this.digest(playerKey),
-            settings: { roundRobinEnabled: false },
+            settings: { ...DEFAULT_SETTINGS },
             roundRobin: { participants: [], lastServedControllerId: null },
             currentVideo: null,
             playback: {
@@ -66,11 +81,13 @@ class RoomService {
                 positionSec: 0,
                 durationSec: null,
                 updatedAt: now,
+                sampledAt: now,
                 videoId: null,
                 queueId: null,
                 volume: 100,
             },
             allowNewControllers: true,
+            lyricsOverrides: {},
             nextQueueId: 1,
             version: 1,
             controllers: new Map(),
@@ -180,6 +197,7 @@ class RoomService {
             createdAt: now,
             removedAt: null,
             colorHue: crypto.randomInt(0, 360),
+            lyricsEnabled: false,
         };
         room.controllers.set(tokenHash, controller);
         this.upsertParticipant(room, controller.id);
@@ -258,6 +276,8 @@ class RoomService {
             thumbnailUrl: typeof video.thumbnailUrl === 'string' && /^https:\/\//.test(video.thumbnailUrl) ? video.thumbnailUrl.slice(0, 1000) : undefined,
             sourcePlaylistId: video.sourcePlaylistId ? cleanText(video.sourcePlaylistId, 128) : undefined,
             madeForKids: Boolean(video.madeForKids),
+            // From the Data API; lyrics lookups use it to pick the right recording.
+            durationSec: Number.isFinite(video.durationSec) && video.durationSec > 0 ? Math.round(video.durationSec) : undefined,
         };
     }
 
@@ -394,11 +414,110 @@ class RoomService {
     updateSettings(roomId, token, settings) {
         const room = this.requireRoom(roomId);
         this.controller(room, token);
-        if (!settings || typeof settings.roundRobinEnabled !== 'boolean') throw new AppError('invalid_settings', 'Invalid settings');
-        room.settings.roundRobinEnabled = settings.roundRobinEnabled;
+        if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new AppError('invalid_settings', 'Invalid settings');
+        const changes = {};
+        for (const [key, value] of Object.entries(settings)) {
+            if (!BOOLEAN_SETTINGS.includes(key) || typeof value !== 'boolean') throw new AppError('invalid_settings', 'Invalid settings');
+            changes[key] = value;
+        }
+        if (!Object.keys(changes).length) throw new AppError('invalid_settings', 'Invalid settings');
+        Object.assign(room.settings, changes);
         this.reorderRoundRobin(room);
-        this.mutate(room, 'settings_updated', { roundRobinEnabled: settings.roundRobinEnabled });
+        this.mutate(room, 'settings_updated', changes);
         return room.settings;
+    }
+
+    /** A controller's own preference: in per-singer mode, only their songs show lyrics when it is on. */
+    setControllerLyrics(roomId, token, enabled) {
+        const room = this.requireRoom(roomId);
+        const controller = this.controller(room, token);
+        if (typeof enabled !== 'boolean') throw new AppError('invalid_lyrics_preference', 'Lyrics preference must be a boolean');
+        controller.lyricsEnabled = enabled;
+        this.mutate(room, 'controller_lyrics_toggled', { controllerId: controller.id, enabled });
+        return controller;
+    }
+
+    /**
+     * Pin the lyrics source and/or offset this room uses for the current video.
+     * `null` clears that override so the song's administrator default applies.
+     */
+    setLyricsOverride(roomId, token, { expectedQueueId, source, offsetMs } = {}) {
+        const room = this.requireRoom(roomId);
+        this.controller(room, token);
+        const video = room.currentVideo;
+        if (!video) throw new AppError('nothing_playing', 'There is no current video', 409);
+        if (expectedQueueId === undefined || expectedQueueId === null || String(expectedQueueId) !== String(video.queueId)) {
+            throw new AppError('stale_lyrics', 'The current video changed before the lyrics change was applied', 409);
+        }
+        if (source === undefined && offsetMs === undefined) throw new AppError('invalid_lyrics_update', 'A lyrics source or offset is required');
+        const override = { ...(room.lyricsOverrides[video.id] || {}) };
+        if (source !== undefined) {
+            const normalized = normalizeSource(source, { allowNull: true });
+            if (normalized === null) delete override.source;
+            else override.source = normalized;
+        }
+        if (offsetMs !== undefined) {
+            if (offsetMs === null) delete override.offsetMs;
+            else override.offsetMs = normalizeOffset(offsetMs);
+        }
+        delete room.lyricsOverrides[video.id];
+        if (override.source !== undefined || override.offsetMs !== undefined) {
+            room.lyricsOverrides[video.id] = { ...override, updatedAt: Date.now() };
+        }
+        const entries = Object.entries(room.lyricsOverrides);
+        if (entries.length > MAX_LYRICS_OVERRIDES) {
+            entries.sort((a, b) => (a[1].updatedAt || 0) - (b[1].updatedAt || 0))
+                .slice(0, entries.length - MAX_LYRICS_OVERRIDES)
+                .forEach(([videoId]) => delete room.lyricsOverrides[videoId]);
+        }
+        // Offset nudges arrive in bursts; persist them without an event per tap.
+        this.touchAuthenticated(room);
+        return this.lyricsOverride(room);
+    }
+
+    lyricsOverride(room) {
+        const override = room.currentVideo ? room.lyricsOverrides?.[room.currentVideo.id] : null;
+        return {
+            ...(override?.source ? { source: override.source } : {}),
+            ...(Number.isFinite(override?.offsetMs) ? { offsetMs: override.offsetMs } : {}),
+        };
+    }
+
+    /**
+     * Whether the room display shows lyrics for the current video. Lyrics are
+     * opt-in per room; in per-singer mode the controller that queued the song
+     * must also have lyrics turned on.
+     */
+    lyricsDisplay(room) {
+        if (!room.settings.lyricsEnabled || !room.currentVideo) return false;
+        if (!room.settings.lyricsPerUser) return true;
+        const owner = [...room.controllers.values()].find((controller) => controller.id === room.currentVideo.controllerId && !controller.removedAt);
+        return Boolean(owner?.lyricsEnabled);
+    }
+
+    /**
+     * A controller is reading lyrics on its Lyrics tab. Kept in memory only:
+     * while recent, the room's upcoming songs are looked up ahead of time even
+     * if the room display has lyrics off.
+     */
+    noteLyricsReader(room, now = Date.now()) {
+        room.lyricsReaderAt = now;
+    }
+
+    lyricsReaderActive(room, now = Date.now()) {
+        return Number.isFinite(room.lyricsReaderAt) && now - room.lyricsReaderAt < LYRICS_READER_WINDOW_MS;
+    }
+
+    /**
+     * Whether lyrics should be fetched ahead of time for a video a controller
+     * queued: the room display will show them, or someone in the room has been
+     * reading lyrics on a controller.
+     */
+    wantsLyricsFor(room, controllerId) {
+        if (this.lyricsReaderActive(room)) return true;
+        if (!room.settings.lyricsEnabled) return false;
+        if (!room.settings.lyricsPerUser) return true;
+        return [...room.controllers.values()].some((controller) => controller.id === controllerId && controller.lyricsEnabled && !controller.removedAt);
     }
 
     updatePlayback(roomId, playerKey, update) {
@@ -412,6 +531,10 @@ class RoomService {
         if (duration !== undefined && duration !== null && (!Number.isFinite(duration) || duration < 0)) throw new AppError('invalid_playback', 'Invalid playback duration');
         if (volume !== undefined && (!Number.isFinite(volume) || volume < 0 || volume > 100)) throw new AppError('invalid_playback', 'Invalid playback volume');
         if (Number.isFinite(position) && Number.isFinite(duration) && position > duration + 5) throw new AppError('invalid_playback', 'Playback position exceeds duration');
+        const rate = update.playbackRate;
+        if (rate !== undefined && (!Number.isFinite(rate) || rate < 0.25 || rate > 2)) throw new AppError('invalid_playback', 'Invalid playback rate');
+        const latency = update.latencyMs;
+        if (latency !== undefined && latency !== null && (!Number.isFinite(latency) || latency < 0 || latency > 60_000)) throw new AppError('invalid_playback', 'Invalid latency');
         if (update.queueId !== undefined && update.queueId !== null && String(update.queueId) !== String(room.currentVideo?.queueId)) {
             throw new AppError('stale_playback', 'Playback update is for a stale queue item');
         }
@@ -422,9 +545,17 @@ class RoomService {
         if (position !== undefined) room.playback.positionSec = position;
         if (duration !== undefined) room.playback.durationSec = duration;
         if (volume !== undefined) room.playback.volume = normalizeVolume(volume);
+        if (rate !== undefined) room.playback.playbackRate = rate;
+        if (latency !== undefined) room.playback.roomLatencyMs = latency === null ? null : Math.round(latency);
         room.playback.videoId = room.currentVideo?.id || null;
         room.playback.queueId = room.currentVideo?.queueId || null;
         room.playback.updatedAt = Date.now();
+        // positionSec was true at sampledAt on the server clock, which lets every
+        // client extrapolate the same position regardless of its own latency.
+        const sampledAt = update.sampledAt;
+        room.playback.sampledAt = Number.isFinite(sampledAt) && Math.abs(sampledAt - room.playback.updatedAt) <= MAX_SAMPLE_SKEW_MS
+            ? Math.round(sampledAt)
+            : room.playback.updatedAt;
         // Only advancing playback renews the room. Players publish a snapshot
         // every second whatever their state, so counting every one of them let a
         // paused or ended tab hold a room open past the inactivity window
@@ -496,6 +627,7 @@ class RoomService {
         }
 
         room.playback.updatedAt = Date.now();
+        if (command.type !== 'volume') room.playback.sampledAt = room.playback.updatedAt;
         this.mutate(room, 'playback_controlled', {
             controllerId: controller.id,
             command: command.type,
@@ -512,6 +644,7 @@ class RoomService {
             positionSec: 0,
             durationSec: null,
             updatedAt: Date.now(),
+            sampledAt: Date.now(),
             videoId: video?.id || null,
             queueId: video?.queueId || null,
             volume,
@@ -619,6 +752,7 @@ class RoomService {
                 enabled: controller.enabled,
                 createdAt: controller.createdAt,
                 colorHue: controller.colorHue,
+                lyricsEnabled: Boolean(controller.lyricsEnabled),
             })),
         };
     }
@@ -750,4 +884,4 @@ class RoomService {
     }
 }
 
-module.exports = { PLAYBACK_STATES, RoomService };
+module.exports = { DEFAULT_SETTINGS, PLAYBACK_STATES, RoomService };

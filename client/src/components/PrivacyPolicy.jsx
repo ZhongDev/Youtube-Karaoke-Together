@@ -24,7 +24,7 @@ const PrivacyPolicy = () => {
         </Box>
 
         <Typography variant="body2" sx={{ fontStyle: "italic", color: "text.secondary", mb: 3 }}>
-          Effective July 21, 2026 · Version {CURRENT_PRIVACY_POLICY_VERSION}
+          Effective October 31, 2026 · Version {CURRENT_PRIVACY_POLICY_VERSION}
         </Typography>
         <Paper sx={{ p: 3, mb: 5, borderLeft: "4px solid #3B82F6", background: "rgba(59,130,246,.1)" }}>
           <Typography>
@@ -36,7 +36,9 @@ const PrivacyPolicy = () => {
 
         <Section title="1. Information we process">
           <List disablePadding>
-            <Item><strong>Active rooms:</strong>&nbsp;room identifiers, creation/activity times, room settings, playback checkpoints, selected YouTube video IDs and metadata, queue order, temporary controller display names/colors, and hashed room credentials.</Item>
+            <Item><strong>Active rooms:</strong>&nbsp;room identifiers, creation/activity times, room settings (including whether lyrics are shown), playback checkpoints, selected YouTube video IDs and metadata, queue order, temporary controller display names/colors and lyrics preferences, per-video lyrics source and timing adjustments, and hashed room credentials.</Item>
+            <Item><strong>Playback timing:</strong>&nbsp;the room screen’s reported playback position, the server-clock time it was sampled, its playback rate, and the measured network latency of the room screen and controllers. These keep lyrics on every screen in time and are not linked to a person.</Item>
+            <Item><strong>Lyrics cache:</strong>&nbsp;for each song whose lyrics were looked up, the YouTube video ID with a snapshot of its public title, channel, and duration; lyrics text found by a lyrics provider or entered by an administrator; search terms an administrator or room controller entered to correct a match; reading aids (romaji, romanization, pinyin) computed from those lyrics; lookup outcomes; administrator defaults; and an aggregate request count. The cache contains no room, controller, or personal identifier.</Item>
             <Item><strong>Closed-room history:</strong>&nbsp;a minimized room summary, timestamps, client-count statistics, and selected-video history. Controller names, search queries, IP-address histories, user-agent histories, and raw credentials are excluded.</Item>
             <Item><strong>YouTube API operations:</strong>&nbsp;API method, quota bucket/cost, time, result status, latency, and optional room correlation. API keys are never displayed in the dashboard or usage records.</Item>
             <Item><strong>Administrator accounts:</strong>&nbsp;Google account subject identifier, email/name snapshot, role, sessions, invitations, and security audit events. Google sign-in is separate from YouTube account authorization.</Item>
@@ -63,6 +65,7 @@ const PrivacyPolicy = () => {
             <Item>When a room closes, controller identity/display-name records and room credentials are removed or revoked; remaining minimized room and selected-video history is retained in the live database for at most 28 days and never beyond 30 calendar days.</Item>
             <Item>Locally metered YouTube API usage records are retained in the live database for at most 28 days and never beyond 30 calendar days.</Item>
             <Item>Stored non-authorized YouTube API metadata is deleted before the 30-calendar-day boundary. Historical displays identify the time and context of the record.</Item>
+            <Item>Lyrics-cache entries refresh their YouTube metadata snapshot through the YouTube Data API after 21 days. An entry whose video is no longer available, or that could not be refreshed within 28 days, is deleted together with its lyrics and reading aids. If an administrator added or edited that entry, only the YouTube title, channel, and duration are deleted; the video ID, administrator settings, and lyrics are kept. Lyrics text otherwise stays cached so songs are not looked up again; administrators can delete any entry.</Item>
             <Item>Application-managed operational backups rotate within 24 hours so they do not extend API-data age beyond the disclosed limit. A deletion may remain only in that short-lived recovery copy until rotation completes.</Item>
             <Item>Expired sessions and invitations are automatically removed. Browser-local preferences remain until you clear site data.</Item>
           </List>
@@ -72,6 +75,7 @@ const PrivacyPolicy = () => {
           <Typography color="text.secondary" paragraph>Information is shared only as necessary with:</Typography>
           <List disablePadding>
             <Item><strong>YouTube and Google:</strong>&nbsp;for searches, video metadata, embedded playback, Google administrator sign-in, and related security/abuse processing.</Item>
+            <Item><strong>Lyrics providers (LRCLIB at lrclib.net and NetEase Cloud Music at music.163.com):</strong>&nbsp;when lyrics are needed for a song (including the next few songs queued in a room that shows or reads lyrics, so they are ready when each song starts), our server sends search terms derived from the video’s public title and channel, and its duration. When a controller or administrator corrects a match, the artist and title they entered are sent instead. Requests come from our server; no room, controller, user, IP address, or browser identifier is sent, and no provider cookies are stored. An operator can turn either provider off.</Item>
             <Item><strong>Hosting and infrastructure providers:</strong>&nbsp;to run the application, encrypted transport, storage, logging, and backups.</Item>
             <Item><strong>Legal or security recipients:</strong>&nbsp;when reasonably required to comply with law or protect users and the service.</Item>
           </List>
@@ -91,7 +95,7 @@ const PrivacyPolicy = () => {
 
         <Section title="6. Security">
           <Typography color="text.secondary">
-            We use HTTPS in production, restricted administrative access, hashed bearer credentials, short-lived invitations, revocable server-side sessions, role-based access controls, CSRF protection, database access controls, and audited retention jobs. No internet service can guarantee absolute security.
+            We use HTTPS in production, restricted administrative access, hashed bearer credentials, short-lived invitations, revocable server-side sessions, role-based access controls, CSRF protection, database access controls, and audited retention jobs. Administrator changes to cached lyrics, and lyrics-search corrections made from a controller (with the room and controller identifiers, the search terms, and the time), are recorded in the security audit log. No internet service can guarantee absolute security.
           </Typography>
         </Section>
 

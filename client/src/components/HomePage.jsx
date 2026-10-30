@@ -483,15 +483,19 @@ const HomePage = () => {
         </DialogTitle>
         <DialogContent sx={{ pt: 3 }}>
           <Typography paragraph sx={{ color: "text.secondary", mt: 2 }}>
-            Our Privacy Policy has changed, effective July 21, 2026. We now use
-            durable room state for restart recovery and retain a minimized room
-            and selected-video history for administrator operations for up to 30 days.
+            Our Privacy Policy has changed, effective October 31, 2026, to cover
+            optional lyrics. When a room turns lyrics on, our server looks songs up
+            with LRCLIB and NetEase Cloud Music using search terms taken from the
+            video&apos;s public title and channel. No room, controller, or personal
+            identifier is sent to them.
           </Typography>
           <Typography paragraph sx={{ color: "text.secondary" }}>
-            Search queries, controller display names, room credentials, IP address
-            histories, and raw authentication tokens are not included in that
-            historical room record. Authorized administrators can view the retained
-            room summaries and locally metered YouTube API usage.
+            Found lyrics are cached by video so songs are not looked up again; each
+            entry&apos;s YouTube details are refreshed or deleted within 30 days.
+            Rooms also store whether lyrics are on, per-song timing adjustments, and
+            each controller&apos;s lyrics preference, which are deleted with the room&apos;s
+            controller records. Room history, search, and credential handling are
+            otherwise unchanged.
           </Typography>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             Policy version: {CURRENT_PRIVACY_POLICY_VERSION}. Please review the{" "}

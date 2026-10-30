@@ -17,6 +17,7 @@ import {
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
+  MenuItem,
   TextField,
 } from "@mui/material";
 import YouTube from "react-youtube";
@@ -42,6 +43,12 @@ import {
   playerPlaybackMatchesVideo,
   reconcilePlayerIntent,
 } from "../features/room/playerControls";
+import LyricsBoundary from "../features/lyrics/LyricsBoundary";
+import LyricsOverlay from "../features/lyrics/LyricsOverlay";
+import { READING_MODES } from "../features/lyrics/lyricsDocument";
+import { serverClockStats, serverTimeAt, startServerClock } from "../features/lyrics/serverClock";
+import { SyncClock } from "../features/lyrics/syncClock";
+import useRoomLyrics from "../features/lyrics/useRoomLyrics";
 
 const PLAYER_OPTIONS = {
   host: "https://www.youtube-nocookie.com",
@@ -68,6 +75,8 @@ const Room = () => {
   const playbackRef = useRef(null);
   const pausedRestoreIdentityRef = useRef(null);
   const roomContainerRef = useRef(null);
+  const playerClockRef = useRef(new SyncClock());
+  const publishPlaybackRef = useRef(null);
 
   // Get playerKey from URL or localStorage
   const urlPlayerKey = searchParams.get('key');
@@ -109,6 +118,11 @@ const Room = () => {
     const stored = localStorage.getItem(STORAGE_KEYS.ROOM_QUEUE_COLORS_ENABLED);
     return stored === null ? true : stored === "true";
   });
+  // Romaji (or Korean romanization / pinyin) over CJK lyrics unless turned off here.
+  const [lyricsReadingMode, setLyricsReadingMode] = useState(() => {
+    const stored = localStorage.getItem(STORAGE_KEYS.ROOM_LYRICS_READING);
+    return READING_MODES.includes(stored) ? stored : "romaji";
+  });
 
   // Use the socket hook
   const {
@@ -120,6 +134,42 @@ const Room = () => {
     joinRoomAdmin,
     leaveRoom,
   } = useSocket();
+
+  useEffect(() => {
+    if (socket) startServerClock(socket);
+  }, [socket]);
+
+  const { state: lyricsState, document: lyricsDocument } = useRoomLyrics({
+    socket,
+    roomId,
+    queueId: currentVideo?.queueId ?? null,
+    wantDocument: "display",
+    readingMode: lyricsReadingMode,
+  });
+
+  // The player's position, smoothed between the embed's coarse time reports.
+  // Polled every animation frame by the lyrics overlay and before each
+  // playback report.
+  const pollPlayerClock = useCallback(() => {
+    const clock = playerClockRef.current;
+    const now = performance.now();
+    const player = playerRef.current;
+    try {
+      if (player && typeof player.getCurrentTime === "function") {
+        const raw = player.getCurrentTime();
+        if (Number.isFinite(raw)) {
+          const state = typeof player.getPlayerState === "function" ? player.getPlayerState() : -1;
+          const rate = typeof player.getPlaybackRate === "function" ? player.getPlaybackRate() : 1;
+          clock.poll(raw, now, rate, state === 1);
+        }
+      }
+    } catch (_) { /* player mid-teardown */ }
+    return clock.timeS(now) * 1000;
+  }, []);
+
+  useEffect(() => {
+    playerClockRef.current.reset();
+  }, [currentVideo?.queueId]);
 
   // Compute resume position based on playback snapshot
   const computeStartSeconds = useCallback(
@@ -417,6 +467,9 @@ const Room = () => {
       );
       if (restoreComplete) pausedRestoreIdentityRef.current = null;
     } catch (_) {}
+    // Report play/pause/buffering at once so controllers' lyrics follow
+    // without waiting for the next periodic report.
+    publishPlaybackRef.current?.();
   };
 
   // Ensure we load the current room video once the player is ready or currentVideo changes
@@ -459,9 +512,12 @@ const Room = () => {
 
   // Periodically publish playback time to server while video is playing
   useEffect(() => {
-    if (!playerKey || !socket || !isConnected) return;
+    if (!playerKey || !socket || !isConnected) {
+      publishPlaybackRef.current = null;
+      return undefined;
+    }
 
-    const interval = setInterval(() => {
+    const publish = () => {
       if (!playerRef.current) return;
       try {
         const player = playerRef.current;
@@ -474,22 +530,39 @@ const Room = () => {
             restorePaused = false;
           }
         }
+        // Stamp the report with when its position was actually true, on the
+        // server's clock, so controllers can extrapolate it without guessing
+        // how long the message spent in transit.
+        const now = performance.now();
+        pollPlayerClock();
+        const sampledAt = Math.round(serverTimeAt(now - playerClockRef.current.sampleAgeMs(now)));
         const snapshot = playerPlaybackSnapshot(player, currentVideo, playbackRef.current, restorePaused);
         if (!snapshot) return;
-        
+        const rate = typeof player.getPlaybackRate === "function" ? player.getPlaybackRate() : 1;
+        const { rttMs } = serverClockStats();
+
         socket.emit("playback-state", {
           roomId,
           playerKey,
           videoId: currentVideo?.id || null,
           queueId: currentVideo?.queueId || null,
           ...snapshot,
+          sampledAt,
+          ...(Number.isFinite(rate) && rate >= 0.25 && rate <= 2 ? { playbackRate: rate } : {}),
+          latencyMs: Number.isFinite(rttMs) ? Math.round(rttMs / 2) : null,
         });
       } catch (err) {
         console.error("[ERR] Failed to get playback state:", err);
       }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [socket, roomId, currentVideo, playerKey, isConnected]);
+    };
+
+    publishPlaybackRef.current = publish;
+    const interval = setInterval(publish, 1000);
+    return () => {
+      clearInterval(interval);
+      if (publishPlaybackRef.current === publish) publishPlaybackRef.current = null;
+    };
+  }, [socket, roomId, currentVideo, playerKey, isConnected, pollPlayerClock]);
 
   // Admin actions
   const handleToggleController = (controllerId, enabled) => {
@@ -527,6 +600,11 @@ const Room = () => {
   const handleToggleRoomQueueColors = (enabled) => {
     setRoomQueueColorsEnabled(enabled);
     localStorage.setItem(STORAGE_KEYS.ROOM_QUEUE_COLORS_ENABLED, String(enabled));
+  };
+
+  const handleLyricsReadingMode = (mode) => {
+    setLyricsReadingMode(mode);
+    localStorage.setItem(STORAGE_KEYS.ROOM_LYRICS_READING, mode);
   };
 
   const handleDeleteRoomData = async () => {
@@ -720,6 +798,9 @@ const Room = () => {
                 allow="autoplay"
               />
             </Box>
+            <LyricsBoundary resetKey={`${currentVideo?.queueId}|${lyricsState?.revision}`}>
+              <LyricsOverlay state={lyricsState} document={lyricsDocument} getPlaybackMs={pollPlayerClock} />
+            </LyricsBoundary>
             {playerError && currentVideo && (
               <Paper sx={{ position: "absolute", zIndex: 5, p: 2, textAlign: "center", background: "rgba(10,10,15,.92)" }}>
                 <Typography gutterBottom>Video playback failed (code {playerError}).</Typography>
@@ -834,6 +915,21 @@ const Room = () => {
                   "& .MuiChip-label": { px: 0.75 },
                 }}
               />
+            )}
+            {settingsState.lyricsEnabled && (
+              <Tooltip title={settingsState.lyricsPerUser ? "Lyrics shown for singers who turned them on" : "Lyrics shown on this screen"}>
+                <Chip
+                  label={settingsState.lyricsPerUser ? "Lyrics · per singer" : "Lyrics"}
+                  size="small"
+                  sx={{
+                    height: 18,
+                    fontSize: "0.6rem",
+                    background: "rgba(236, 72, 153, 0.15)",
+                    color: "#F472B6",
+                    "& .MuiChip-label": { px: 0.75 },
+                  }}
+                />
+              </Tooltip>
             )}
             {!isConnected && (
               <Chip
@@ -1177,6 +1273,38 @@ const Room = () => {
             </Typography>
           </Box>
 
+          {/* Lyrics display */}
+          <Box
+            sx={{
+              mb: 3,
+              p: 2,
+              background: "rgba(139, 92, 246, 0.05)",
+              borderRadius: 2,
+              border: "1px solid rgba(148, 163, 184, 0.05)",
+            }}
+          >
+            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>Lyrics</Typography>
+            <Typography variant="caption" sx={{ display: "block", color: "text.secondary", mb: 2 }}>
+              {settingsState.lyricsEnabled
+                ? settingsState.lyricsPerUser
+                  ? "On for singers who turned lyrics on for their own songs."
+                  : "On for every song. A controller can turn this off from its Controls tab."
+                : "Off. A controller can turn lyrics on from its Controls tab."}
+            </Typography>
+            <TextField
+              select
+              fullWidth
+              size="small"
+              label="Reading aid over Japanese, Korean, and Chinese lyrics"
+              value={lyricsReadingMode}
+              onChange={(event) => handleLyricsReadingMode(event.target.value)}
+            >
+              <MenuItem value="romaji">Romaji / romanization / pinyin</MenuItem>
+              <MenuItem value="furigana">Furigana for Japanese (romanization otherwise)</MenuItem>
+              <MenuItem value="none">Off</MenuItem>
+            </TextField>
+          </Box>
+
           {/* Controllers List */}
           <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
             Connected Controllers ({controllers.length})
@@ -1254,6 +1382,18 @@ const Room = () => {
                               fontSize: "0.6rem",
                               background: "rgba(239, 68, 68, 0.2)",
                               color: "#EF4444",
+                            }}
+                          />
+                        )}
+                        {settingsState.lyricsPerUser && controller.lyricsEnabled && (
+                          <Chip
+                            label="Lyrics"
+                            size="small"
+                            sx={{
+                              height: 16,
+                              fontSize: "0.6rem",
+                              background: "rgba(236, 72, 153, 0.2)",
+                              color: "#F472B6",
                             }}
                           />
                         )}
