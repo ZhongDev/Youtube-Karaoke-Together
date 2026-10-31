@@ -21,6 +21,7 @@ import { SOURCE_LABELS, SOURCE_ORDER } from "../lyrics/lyricsDocument";
 import { estimatePlaybackMs, lyricTimeMs } from "../lyrics/playbackEstimate";
 import { serverClockStats, serverNow, subscribeServerClock } from "../lyrics/serverClock";
 import useRoomLyrics from "../lyrics/useRoomLyrics";
+import { CONTROLLER_NAV_HEIGHT } from "./ControllerNavigation";
 import LyricsMatchDialog from "./LyricsMatchDialog";
 
 // Mirrors the room display on a phone: the same song, source, offset, and
@@ -150,7 +151,13 @@ const LyricsTab = ({
   const ownLatency = Number.isFinite(clockStats.rttMs) ? Math.round(clockStats.rttMs / 2) : null;
 
   return (
-    <Box sx={{ maxWidth: 720, mx: "auto", width: "100%", height: "calc(100dvh - 64px)", display: "flex", flexDirection: "column", p: { xs: 1, sm: 2 }, gap: 1 }}>
+    // Pinned between the top of the screen and the fixed bottom navigation, so
+    // the lyrics box always ends where the navigation starts: viewport-unit
+    // heights are missing or wrong in some mobile and in-app browsers.
+    <Box sx={{
+      position: "fixed", top: 0, left: 0, right: 0, bottom: CONTROLLER_NAV_HEIGHT,
+      maxWidth: 720, mx: "auto", width: "100%", display: "flex", flexDirection: "column", p: { xs: 1, sm: 2 }, gap: 1,
+    }}>
       <Paper sx={{ p: 1.5, flexShrink: 0 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: currentVideo ? 1 : 0 }}>
           <Typography variant="subtitle1" sx={{ flex: 1, minWidth: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
