@@ -10,5 +10,6 @@
   "maxHttpBufferSize": 65536,
   "maxSocketEventsPerMinute": 240,
   "maxPlaylistAddsPerMinute": 5,
-  "maxVideoAddsPerMinute": 30
+  "maxVideoAddsPerMinute": 30,
+  "maxLyricsSearchesPerMinute": 3
 }

@@ -9,7 +9,47 @@ function errorPayload(event, error) {
     };
 }
 
-function registerSocketHandlers(io, { roomService, youtubeService, config, logger = console }) {
+/** Everything a room member needs to know about the current song's lyrics, minus the text. */
+function lyricsStateFor(room, { roomService, lyricsService }) {
+    const video = room.currentVideo;
+    return {
+        enabled: Boolean(room.settings.lyricsEnabled),
+        perUser: Boolean(room.settings.lyricsPerUser),
+        display: roomService.lyricsDisplay(room),
+        queueId: video?.queueId ?? null,
+        videoId: video?.id ?? null,
+        ...lyricsService.songState(video?.id ?? null, roomService.lyricsOverride(room)),
+    };
+}
+
+const LYRICS_MEMBER_ROLES = new Set(['player', 'controller']);
+// Queued songs this close to their turn are looked up ahead of time.
+const LYRICS_PREFETCH_AHEAD = 5;
+
+function registerSocketHandlers(io, { roomService, youtubeService, lyricsService, config, logger = console }) {
+    const broadcastLyrics = (room) => io.to(room.id).emit('lyrics-updated', lyricsStateFor(room, { roomService, lyricsService }));
+
+    // Look up the next few queued songs whose lyrics the room will want, so
+    // they are cached (with reading aids) before each song starts. Called
+    // whenever the front of the queue or the room's lyrics rules change.
+    const prefetchLyrics = (room) => {
+        for (const item of room.queue.slice(0, LYRICS_PREFETCH_AHEAD)) {
+            if (roomService.wantsLyricsFor(room, item.controllerId)) lyricsService.prefetch(item);
+        }
+    };
+
+    // Called whenever the current video or the room's display rule may have
+    // changed: start the lookup if the room display will need it, then tell
+    // every member what the display should now be doing.
+    const lyricsContextChanged = (room) => {
+        if (room.currentVideo && roomService.lyricsDisplay(room)) {
+            lyricsService.ensure(room.currentVideo, { durationSec: room.playback?.durationSec });
+            lyricsService.recordRequest(`${room.id}:${room.currentVideo.queueId}`, room.currentVideo.id);
+        }
+        prefetchLyrics(room);
+        broadcastLyrics(room);
+    };
+
     // Budgets for the calls that spend the shared YouTube API quota are held
     // across connections and keyed on the registered controller. Kept in the
     // socket closure they reset on every reconnect, so a client could refresh its
@@ -29,10 +69,17 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
             }
         };
 
-        const checkMutationRate = (name, limit, controllerId) => {
+        const checkMutationRate = (name, limit, controllerId, message = 'Too many YouTube additions; wait before trying again') => {
             if (!quotaLimiter.consume(`${controllerId}:${name}`, limit)) {
-                throw new AppError('quota_action_rate_limited', 'Too many YouTube additions; wait before trying again', 429);
+                throw new AppError('quota_action_rate_limited', message, 429);
             }
+        };
+
+        const requireLyricsMember = (roomId) => {
+            if (!membership || membership.roomId !== roomId || !LYRICS_MEMBER_ROLES.has(membership.role)) {
+                throw new AppError('not_joined', 'Socket is not joined to this room', 403);
+            }
+            return roomService.requireRoom(roomId);
         };
 
         const leaveMembership = () => {
@@ -112,6 +159,7 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
                 controllerId: controller.id,
                 username: controller.name,
                 colorHue: controller.colorHue,
+                lyricsEnabled: Boolean(controller.lyricsEnabled),
             };
             socket.emit('controller-registered', response);
             socket.emit('room-state', roomService.publicState(room));
@@ -127,6 +175,7 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
                 controllerId: controller.id,
                 username: controller.name,
                 colorHue: controller.colorHue,
+                lyricsEnabled: Boolean(controller.lyricsEnabled),
             };
             socket.emit('controller-authenticated', response);
             socket.emit('room-state', roomService.publicState(room));
@@ -173,6 +222,8 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
             const result = roomService.addVideos(room.id, controllerKey, videos, { priority: addToTop === true });
             if (result.currentChanged) io.to(room.id).emit('video-changed', room.currentVideo);
             io.to(room.id).emit('queue-updated', room.queue);
+            if (result.currentChanged) lyricsContextChanged(room);
+            else prefetchLyrics(room);
             socket.emit('queue-add-result', { addedCount: result.addedCount, skippedCount: result.skippedCount });
             return { addedCount: result.addedCount, skippedCount: result.skippedCount };
         });
@@ -184,6 +235,7 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
                 io.to(room.id).emit('video-changed', room.currentVideo);
                 io.to(room.id).emit('queue-updated', room.queue);
                 io.to(room.id).emit('playback-updated', room.playback);
+                lyricsContextChanged(room);
             }
             return result;
         });
@@ -195,6 +247,7 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
                 io.to(room.id).emit('video-changed', room.currentVideo);
                 io.to(room.id).emit('queue-updated', room.queue);
                 io.to(room.id).emit('playback-updated', room.playback);
+                lyricsContextChanged(room);
             }
             return result;
         });
@@ -211,6 +264,7 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
             roomService.removeFromQueue(roomId, controllerKey, queueId);
             const room = roomService.requireRoom(roomId);
             io.to(room.id).emit('queue-updated', room.queue);
+            prefetchLyrics(room);
         });
 
         on('reorder-queue', ({ roomId, orderedQueueIds, controllerKey }) => {
@@ -219,6 +273,7 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
             // Always broadcast: clients apply reorders optimistically without the
             // round-robin rebuild, so even a no-op has to reconcile their view.
             io.to(room.id).emit('queue-updated', room.queue);
+            if (result.changed) prefetchLyrics(room);
             return { changed: result.changed, scope: result.scope };
         });
 
@@ -227,6 +282,94 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
             const room = roomService.requireRoom(roomId);
             io.to(room.id).emit('queue-updated', room.queue);
             io.to(room.id).emit('settings-updated', updated);
+            if (Object.hasOwn(settings, 'lyricsEnabled') || Object.hasOwn(settings, 'lyricsPerUser')) lyricsContextChanged(room);
+            return { settings: updated };
+        });
+
+        // ── lyrics ──
+
+        // NTP-style clock probe: the client times the round trip and assumes the
+        // server read its clock halfway through it.
+        on('time-sync', () => ({ serverTime: Date.now() }));
+
+        on('lyrics-get', async ({ roomId, queueId, readingMode, includeDocument, lookup }) => {
+            const room = requireLyricsMember(roomId);
+            const video = room.currentVideo;
+            const current = video && (queueId === undefined || queueId === null || String(queueId) === String(video.queueId));
+            // Start (or resume, after a restart) the lookup for a member that
+            // will show the lyrics: the room display when it shows them, or a
+            // controller with its Lyrics tab open (`lookup`), even while the
+            // room display has lyrics off. Members only ask for the text once
+            // the lookup has found some, so the text request cannot be the trigger.
+            if (current && (lookup === true || includeDocument === true || roomService.lyricsDisplay(room))) {
+                lyricsService.ensure(video, { durationSec: room.playback?.durationSec });
+                lyricsService.recordRequest(`${room.id}:${video.queueId}`, video.id);
+            }
+            if (lookup === true && membership.role === 'controller') {
+                // Someone reads lyrics on a phone: have the next songs ready too.
+                const wasReading = roomService.lyricsReaderActive(room);
+                roomService.noteLyricsReader(room);
+                if (!wasReading) prefetchLyrics(room);
+            }
+            const state = lyricsStateFor(room, { roomService, lyricsService });
+            if (!current || includeDocument !== true || state.status !== 'ready') return { state, document: null };
+            const document = await lyricsService.document(video.id, {
+                source: state.source,
+                readingMode: typeof readingMode === 'string' ? readingMode : 'romaji',
+            });
+            return { state, document };
+        });
+
+        // What the current song's lyrics matched, for checking they belong to
+        // the right recording.
+        on('lyrics-match', ({ roomId, queueId }) => {
+            const room = requireLyricsMember(roomId);
+            const video = room.currentVideo;
+            if (!video || (queueId !== undefined && queueId !== null && String(queueId) !== String(video.queueId))) return { details: null };
+            return { details: lyricsService.matchDetails(video.id) };
+        });
+
+        // A controller corrects the search for the current song. The fix is
+        // shared: it applies wherever the video plays, and it is audited.
+        on('lyrics-search', async ({ roomId, controllerKey, expectedQueueId, artist, track }) => {
+            const room = roomService.requireRoom(roomId);
+            const controller = roomService.controller(room, controllerKey);
+            const video = room.currentVideo;
+            if (!video) throw new AppError('nothing_playing', 'There is no current video', 409);
+            if (expectedQueueId === undefined || expectedQueueId === null || String(expectedQueueId) !== String(video.queueId)) {
+                throw new AppError('stale_lyrics', 'The song changed before the search ran', 409);
+            }
+            checkMutationRate('lyrics-search', config.limits.maxLyricsSearchesPerMinute, controller.id,
+                'Too many lyrics searches; wait a minute before trying again');
+            const result = await lyricsService.searchWithTerms(video, { artist, track }, { roomId: room.id, controllerId: controller.id });
+            return {
+                found: result.found,
+                outcomes: result.outcomes,
+                state: lyricsStateFor(room, { roomService, lyricsService }),
+                details: lyricsService.matchDetails(video.id),
+            };
+        });
+
+        on('lyrics-set', ({ roomId, controllerKey, expectedQueueId, source, offsetMs }) => {
+            const room = roomService.requireRoom(roomId);
+            roomService.controller(room, controllerKey);
+            if (source !== undefined && source !== null && room.currentVideo) {
+                const available = lyricsService.songState(room.currentVideo?.id ?? null).sources.map((entry) => entry.id);
+                if (!available.includes(source)) throw new AppError('lyrics_source_unavailable', 'That lyrics source has nothing for this song', 409);
+            }
+            roomService.setLyricsOverride(roomId, controllerKey, { expectedQueueId, source, offsetMs });
+            const state = lyricsStateFor(room, { roomService, lyricsService });
+            io.to(room.id).emit('lyrics-updated', state);
+            return { state };
+        });
+
+        on('update-controller-lyrics', ({ roomId, controllerKey, enabled }) => {
+            const controller = roomService.setControllerLyrics(roomId, controllerKey, enabled);
+            const room = roomService.requireRoom(roomId);
+            io.to(`${room.id}:player-admin`).emit('controllers-updated', roomService.playerAdminState(room).controllers);
+            if (room.currentVideo?.controllerId === controller.id) lyricsContextChanged(room);
+            else prefetchLyrics(room);
+            return { lyricsEnabled: controller.lyricsEnabled };
         });
 
         on('playback-state', ({ roomId, playerKey, ...update }) => {
@@ -255,6 +398,8 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
             const room = roomService.requireRoom(roomId);
             evictController(room.id, controllerId, 'controller_removed', 'This controller has been removed');
             io.to(`${room.id}:player-admin`).emit('controllers-updated', roomService.playerAdminState(room).controllers);
+            // In per-singer mode a removed controller's song stops showing lyrics.
+            if (room.currentVideo?.controllerId === controllerId) broadcastLyrics(room);
         });
 
         on('admin-toggle-registration', ({ roomId, playerKey, allow }) => {
@@ -273,4 +418,4 @@ function registerSocketHandlers(io, { roomService, youtubeService, config, logge
     });
 }
 
-module.exports = { errorPayload, registerSocketHandlers };
+module.exports = { errorPayload, lyricsStateFor, registerSocketHandlers };

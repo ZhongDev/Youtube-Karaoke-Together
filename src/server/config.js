@@ -3,6 +3,9 @@ const path = require('path');
 // Shared with the client bundle. The server rejects room creation and controller
 // registration that assert a different version, so the two must never drift.
 const { privacyPolicyVersion } = require('../../policy.json');
+const { version } = require('../../package.json');
+
+const LYRICS_PROVIDER_IDS = Object.freeze(['lrclib', 'netease']);
 
 const DEFAULT_LIMITS = Object.freeze({
     maxRooms: 5000,
@@ -17,6 +20,7 @@ const DEFAULT_LIMITS = Object.freeze({
     maxSocketEventsPerMinute: 240,
     maxPlaylistAddsPerMinute: 5,
     maxVideoAddsPerMinute: 30,
+    maxLyricsSearchesPerMinute: 3,
 });
 
 function readLimits(configPath, logger = console) {
@@ -36,6 +40,18 @@ function readLimits(configPath, logger = console) {
         logger.warn(`[WARN] Failed to load limits from ${configPath}: ${error.message}`);
     }
     return limits;
+}
+
+/** LYRICS_PROVIDERS: comma-separated provider IDs; unset means all, "none" means lookups are off. */
+function parseLyricsProviders(value, logger = console) {
+    if (value === undefined || value === null) return [...LYRICS_PROVIDER_IDS];
+    const requested = String(value).split(',').map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+    if (requested.includes('none')) return [];
+    const providers = requested.filter((entry) => LYRICS_PROVIDER_IDS.includes(entry));
+    for (const entry of requested) {
+        if (!LYRICS_PROVIDER_IDS.includes(entry)) logger.warn(`[WARN] Ignoring unknown lyrics provider ${entry}.`);
+    }
+    return [...new Set(providers)];
 }
 
 function normalizeOrigin(value) {
@@ -102,8 +118,16 @@ function loadConfig(overrides = {}, logger = console) {
         playbackCheckpointMs: Number(overrides.playbackCheckpointMs) || 5000,
         maintenanceIntervalMs: Number(overrides.maintenanceIntervalMs) || 60 * 60 * 1000,
         socketPath: nodeEnv === 'production' ? '/ws/' : '/socket.io/',
+        lyricsProviders: overrides.lyricsProviders || parseLyricsProviders(process.env.LYRICS_PROVIDERS, logger),
+        lyricsUserAgent: `YouTubeKaraokeTogether/${version} (+https://github.com/ZhongDev/Youtube-Karaoke-Together)`,
+        lyricsLookupConcurrency: Number(overrides.lyricsLookupConcurrency) || 2,
+        // Wait before the one retry of a provider that answered "busy" (503/429).
+        lyricsBusyRetryMs: Number.isFinite(overrides.lyricsBusyRetryMs) ? overrides.lyricsBusyRetryMs : 1500,
+        // Lyrics-cache metadata is refreshed a week before the retention purge,
+        // so a short YouTube API outage does not cost the cached lyrics.
+        lyricsRefreshAfterMs: Number(overrides.lyricsRefreshAfterMs) || 21 * 24 * 60 * 60 * 1000,
         secureCookies: overrides.secureCookies ?? nodeEnv === 'production',
     };
 }
 
-module.exports = { DEFAULT_LIMITS, loadConfig, normalizeOrigin, readLimits };
+module.exports = { DEFAULT_LIMITS, LYRICS_PROVIDER_IDS, loadConfig, normalizeOrigin, parseLyricsProviders, readLimits };

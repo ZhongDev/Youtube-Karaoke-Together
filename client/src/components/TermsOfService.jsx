@@ -141,7 +141,7 @@ const TermsOfService = () => {
           variant="body2"
           sx={{ fontStyle: "italic", color: "text.secondary", mb: 4 }}
         >
-          Last updated: July 21, 2026
+          Last updated: October 31, 2026
         </Typography>
 
         <HighlightBox color="info">
@@ -207,7 +207,11 @@ const TermsOfService = () => {
             <ListItem sx={{ color: "text.secondary" }}>• Collaborative video queue management</ListItem>
             <ListItem sx={{ color: "text.secondary" }}>• YouTube video search functionality</ListItem>
             <ListItem sx={{ color: "text.secondary" }}>• Multi-device control capabilities</ListItem>
+            <ListItem sx={{ color: "text.secondary" }}>• Optional time-synced lyrics on the room screen and on controllers, with reading aids for Japanese, Korean, and Chinese</ListItem>
           </List>
+          <Typography paragraph sx={{ color: "text.secondary" }}>
+            Lyrics are opt-in for each room. They come from third-party lyrics services (LRCLIB and NetEase Cloud Music) or from this service’s administrators and are shown for personal sing-along only. They may be missing, inaccurate, or out of time, and reading aids are generated automatically. A lyrics-search correction made from a controller is sent to those services and applies to every room that plays the video, so enter only the artist and song title.
+          </Typography>
         </Section>
 
         <Section title="4. User Responsibilities">
@@ -273,7 +277,9 @@ const TermsOfService = () => {
             owned by YouTube Karaoke Together and are protected by copyright,
             trademark, and other intellectual property laws. YouTube content
             accessed through our Service remains the property of YouTube and its
-            licensors.
+            licensors. Song lyrics remain the property of their respective rights
+            holders; their display does not grant any right to copy or redistribute
+            them.
           </Typography>
         </Section>
 

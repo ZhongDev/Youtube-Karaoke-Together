@@ -95,16 +95,16 @@ const ControlsTab = ({
     });
   };
 
-  const toggleRoundRobin = (event) => {
+  const updateRoomSetting = (key) => (event) => {
     if (!controllerKey || !socket) return;
-    const roundRobinEnabled = event.target.checked;
+    const value = event.target.checked;
     socket.timeout(10_000).emit("update-settings", {
       roomId,
       controllerKey,
-      settings: { roundRobinEnabled },
+      settings: { [key]: value },
     }, (error, response) => {
       if (error || !response?.ok) return notify(response?.error?.message || "Settings update timed out.", "error");
-      setSettings((previous) => ({ ...previous, roundRobinEnabled }));
+      setSettings((previous) => ({ ...previous, [key]: value }));
     });
   };
 
@@ -275,9 +275,24 @@ const ControlsTab = ({
 
         <Divider sx={{ my: 3 }} />
         <FormControlLabel
-          control={<Switch checked={Boolean(settings.roundRobinEnabled)} onChange={toggleRoundRobin} disabled={!controllerKey} />}
+          control={<Switch checked={Boolean(settings.roundRobinEnabled)} onChange={updateRoomSetting("roundRobinEnabled")} disabled={!controllerKey} />}
           label="Round-robin queue"
         />
+        <Divider sx={{ my: 2 }} />
+        <FormControlLabel
+          control={<Switch checked={Boolean(settings.lyricsEnabled)} onChange={updateRoomSetting("lyricsEnabled")} disabled={!controllerKey} />}
+          label="Lyrics on the room screen"
+        />
+        <FormControlLabel
+          sx={{ display: "flex", ml: 0 }}
+          control={<Switch checked={Boolean(settings.lyricsPerUser)} onChange={updateRoomSetting("lyricsPerUser")} disabled={!controllerKey || !settings.lyricsEnabled} />}
+          label="Only for singers who turn lyrics on"
+        />
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+          {settings.lyricsPerUser
+            ? "Each singer switches lyrics on for their own songs in the Lyrics tab."
+            : "Lyrics are looked up for every song. Anyone can also read them in the Lyrics tab."}
+        </Typography>
       </Paper>
 
       <Dialog

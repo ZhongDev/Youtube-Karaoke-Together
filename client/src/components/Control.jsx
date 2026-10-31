@@ -12,7 +12,9 @@ import useSocket from "../hooks/useSocket";
 import ControllerConsentDialog from "../features/consent/ControllerConsentDialog";
 import SearchTab from "../features/controller/SearchTab";
 import ControlsTab from "../features/controller/ControlsTab";
-import ControllerNavigation from "../features/controller/ControllerNavigation";
+import ControllerNavigation, { CONTROLLER_TABS } from "../features/controller/ControllerNavigation";
+import LyricsTab from "../features/controller/LyricsTab";
+import { startServerClock } from "../features/lyrics/serverClock";
 import ControllerRegistrationDialog from "../features/controller/ControllerRegistrationDialog";
 import { subscribeToUsername } from "../features/controller/usernameSync";
 import {
@@ -76,6 +78,7 @@ const Control = () => {
     return localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) === "true";
   });
   const [colorHue, setColorHue] = useState(null);
+  const [lyricsPreference, setLyricsPreference] = useState(false);
   const [queueColorsEnabled, setQueueColorsEnabled] = useState(() => getStorageBool(STORAGE_KEYS.QUEUE_COLORS_ENABLED));
   const [bgColorEnabled, setBgColorEnabled] = useState(() => getStorageBool(STORAGE_KEYS.BG_COLOR_ENABLED));
   const [lyricsRomajiEnabled, setLyricsRomajiEnabled] = useState(() => getStorageBool(STORAGE_KEYS.LYRICS_ROMAJI_ENABLED, false));
@@ -102,6 +105,11 @@ const Control = () => {
     leaveRoom,
   } = useSocket();
 
+  // The Lyrics tab extrapolates the room's position on the server's clock.
+  useEffect(() => {
+    if (socket) startServerClock(socket);
+  }, [socket]);
+
   // Check if we need to register or authenticate
   useEffect(() => {
     if (!consentAccepted || !isConnected || !roomId) return;
@@ -117,6 +125,7 @@ const Control = () => {
           setControllerId(data.controllerId);
           setUsername(data.username);
           if (data.colorHue != null) setColorHue(data.colorHue);
+          setLyricsPreference(Boolean(data.lyricsEnabled));
         })
         .catch((error) => {
           console.log('[WARN] Existing key invalid:', error.message);
@@ -303,6 +312,7 @@ const Control = () => {
       setControllerId(data.controllerId);
       setUsername(data.username);
       if (data.colorHue != null) setColorHue(data.colorHue);
+      setLyricsPreference(Boolean(data.lyricsEnabled));
       sessionStorage.removeItem(`${STORAGE_KEYS.REGISTRATION_TOKEN_PREFIX}${roomId}`);
       setControlMasterKey(null);
 
@@ -350,6 +360,18 @@ const Control = () => {
     setNotification({ open: true, message, severity });
   }, []);
 
+  const handleLyricsPreferenceChange = (enabled) => {
+    if (!socket || !controllerKey) return;
+    const previous = lyricsPreference;
+    setLyricsPreference(enabled);
+    socket.timeout(10_000).emit("update-controller-lyrics", { roomId, controllerKey, enabled }, (error, response) => {
+      if (error || !response?.ok) {
+        setLyricsPreference(previous);
+        notify(response?.error?.message || "Updating your lyrics preference timed out.", "error");
+      }
+    });
+  };
+
   if (roomClosedReason) {
     return <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: 3 }}>
       <Box sx={{ maxWidth: 480, textAlign: "center" }}>
@@ -381,7 +403,7 @@ const Control = () => {
         registering={isRegistering} onRegister={handleRegister}
       />
 
-      <Box role="tabpanel" hidden={currentTab !== 0}>
+      <Box role="tabpanel" hidden={currentTab !== CONTROLLER_TABS.search}>
         <SearchTab
           roomId={roomId}
           controllerKey={controllerKey}
@@ -391,7 +413,7 @@ const Control = () => {
           roundRobinEnabled={Boolean(settingsState.roundRobinEnabled)}
         />
       </Box>
-      {currentTab === 1 && (
+      {currentTab === CONTROLLER_TABS.queue && (
         <Queue
           controllerKey={controllerKey}
           controllerId={controllerId}
@@ -399,7 +421,21 @@ const Control = () => {
           lyricsRomajiEnabled={lyricsRomajiEnabled}
         />
       )}
-      {currentTab === 2 && (
+      {currentTab === CONTROLLER_TABS.lyrics && (
+        <LyricsTab
+          roomId={roomId}
+          controllerKey={controllerKey}
+          socket={socket}
+          isConnected={isConnected}
+          currentVideo={currentVideo}
+          playback={playback}
+          settings={settingsState}
+          lyricsPreference={lyricsPreference}
+          onLyricsPreferenceChange={handleLyricsPreferenceChange}
+          notify={notify}
+        />
+      )}
+      {currentTab === CONTROLLER_TABS.controls && (
         <ControlsTab
           roomId={roomId}
           username={username}
@@ -413,7 +449,7 @@ const Control = () => {
           notify={notify}
         />
       )}
-      {currentTab === 3 && (
+      {currentTab === CONTROLLER_TABS.settings && (
         <Settings
           queueColorsEnabled={queueColorsEnabled}
           onToggleQueueColors={handleToggleQueueColors}
